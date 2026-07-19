@@ -98,12 +98,10 @@ InitTestScene*.unity*
 /[Aa]ssets/AddressableAssetsData/*/*.bin*
 
 # Visual Scripting auto-generated files
-/[Aa]ssets/AssetStoreTools*
+/[Aa]ssets/Unity.VisualScripting.Generated/VisualScripting.Flow/UnitOptions.db
+/[Aa]ssets/Unity.VisualScripting.Generated/VisualScripting.Flow/UnitOptions.db.meta
+/[Aa]ssets/Unity.VisualScripting.Generated/VisualScripting.Core/Property Providers
+/[Aa]ssets/Unity.VisualScripting.Generated/VisualScripting.Core/Property Providers.meta
 
-# Python / ML training artifacts
-__pycache__/
-*.pyc
-.venv/
-venv/
-results/
-*.onnx.meta
+# Auto-generated scenes by play mode tests
+/[Aa]ssets/[Ii]nit[Tt]est[Ss]cene*.unity*
