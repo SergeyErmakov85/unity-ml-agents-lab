@@ -107,3 +107,11 @@ __pycache__/
 venv/
 results/
 *.onnx.meta
+
+# ML-Agents пишет сюда тайминги каждого запуска обучения
+/[Aa]ssets/ML-Agents/Timers/
+/[Aa]ssets/ML-Agents/Timers.meta
+
+# Логи batch-режима Unity
+/build.log
+/*.log.meta

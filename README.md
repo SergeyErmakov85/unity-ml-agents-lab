@@ -9,8 +9,11 @@
 ```
 unity-ml-agents-lab/            # ← корень = Unity-проект
 ├── Assets/
-│   ├── Editor/                      # Общие editor-утилиты (ProjectBootstrap)
+│   ├── Editor/                      # Общие editor-утилиты (ProjectBootstrap,
+│   │                                #   MLAgentsTrainingValidator)
 │   ├── Settings/                    # URP-пайплайн проекта (генерируется bootstrap-ом)
+│   ├── ML-Agents/                   # Общие ассеты из репозитория Unity ML-Agents
+│   │   └── Examples/SharedAssets/   #   скрипты, префабы, меши, материалы примеров
 │   └── ML-ENVIRONMENTS/
 │       ├── 01-Basics/               # Базовые концепции ML-Agents
 │       │   └── Hit_the_ball/        #   RollerAgent: докатись до цели (PPO)
@@ -26,33 +29,52 @@ unity-ml-agents-lab/            # ← корень = Unity-проект
 │       └── 10-Research/             # Исследовательские эксперименты
 ├── Packages/                        # Манифест пакетов (ml-agents, URP, Input System)
 ├── ProjectSettings/
-├── docs/                            # Документация и заметки
-├── tools/                           # Вспомогательные утилиты
-└── scripts/                         # Скрипты обучения/автоматизации
+├── config/ml-agents-reference/      # Справочные trainer-конфиги официальных примеров
+├── docs/                            # Документация (см. docs/TRAINING.md)
+├── tools/env-template/              # Шаблон новой среды
+├── scripts/                         # PowerShell: setup-python, train, tensorboard,
+│                                    #   build-scenes, new-environment
+├── requirements.txt                 # Python-зависимости (mlagents 1.1.0, torch)
+└── .python-version                  # 3.10.12
 ```
 
-Каждая среда содержит свои `Scenes/`, `Scripts/`, `Materials/`, editor-скрипт сборки сцены (`Editor/…Setup.cs`, меню **Tools → RL**) и при необходимости `config/` с YAML для `mlagents-learn`.
+Каждая среда содержит свои `Scenes/`, `Scripts/`, `Materials/`, editor-скрипт сборки сцены (`Editor/…Setup.cs`, меню **Tools → RL**) и `config/` с YAML для `mlagents-learn`.
 
 ## Как запустить обучение в среде
 
-1. Открыть репозиторий как Unity-проект (корневую папку).
-2. Открыть сцену нужной среды, например
-   `Assets/ML-ENVIRONMENTS/02-Examples/Greed_world/Scenes/GridWorld.unity`.
-3. В терминале запустить тренер, указав конфиг среды:
+```powershell
+scripts\setup-python.ps1                        # один раз: .venv c Python 3.10.12 и mlagents
+scripts\train.ps1 -List                         # какие среды доступны
+scripts\train.ps1 Greed_world -RunId gw-01      # запустить тренер
+```
 
-   ```
-   mlagents-learn Assets/ML-ENVIRONMENTS/01-Basics/Hit_the_ball/config/RollerAgent.yaml --run-id=roller-01
-   ```
+Когда в консоли появится `Listening on port 5004` — открыть сцену этой среды в Unity
+и нажать **Play**. Результаты пишутся в `results/` (в git не попадает),
+метрики — `scripts\tensorboard.ps1`.
 
-4. Нажать Play в редакторе — начнётся обучение. Результаты пишутся в `results/` (в git не попадает).
+Без скриптов то же самое:
 
-Если после клонирования проект нуждается в настройке (URP, теги, список сцен) — выполнить в редакторе **Tools → RL → Configure Project**.
+```
+.venv\Scripts\mlagents-learn.exe Assets/ML-ENVIRONMENTS/01-Basics/Hit_the_ball/config/RollerAgent.yaml --run-id=roller-01
+```
+
+Если после клонирования проект нуждается в настройке (URP, теги, список сцен) —
+выполнить в редакторе **Tools → RL → Configure Project**, а готовность сред
+к обучению проверить через **Tools → RL → Validate Training Setup**.
+
+Полное руководство, ускорение обучения и разбор типовых ошибок — **[docs/TRAINING.md](docs/TRAINING.md)**.
+
+## Новая среда
+
+```powershell
+scripts\new-environment.ps1 -Name Pendulum -Category 04-Physics
+```
 
 ## Требования
 
-- Unity 6000.5 (LTS)
+- Unity 6000.5.4f1
 - Пакет `com.unity.ml-agents` 4.0.3 (ставится автоматически из манифеста)
-- Python 3.10+ с пакетом `mlagents`
+- Python 3.10.12 + `mlagents` 1.1.0 (ставит `scripts\setup-python.ps1` через [uv](https://docs.astral.sh/uv/))
 
 ## Лицензия
 

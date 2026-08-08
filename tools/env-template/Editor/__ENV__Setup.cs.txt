@@ -1,0 +1,119 @@
+using Unity.MLAgents;
+using Unity.MLAgents.Actuators;
+using Unity.MLAgents.Policies;
+using UnityEditor;
+using UnityEditor.SceneManagement;
+using UnityEngine;
+
+/// <summary>
+/// Собирает сцену среды «__ENV__» из кода: платформа, стены, цель, агент
+/// с Behavior Parameters и Decision Requester.
+/// Сцены в этом репозитории генерируются, а не редактируются вручную:
+/// чтобы изменить сцену — правьте этот файл и пересоберите.
+///
+/// Меню: Tools → RL → Build __ENV__ Scene
+/// Batch: -executeMethod __ENV__Setup.BuildScene
+/// </summary>
+public static class __ENV__Setup
+{
+    private const string Root = "__ROOT__";
+    private const string ScenePath = Root + "/Scenes/__ENV__.unity";
+
+    [MenuItem("Tools/RL/Build __ENV__ Scene")]
+    public static void BuildScene()
+    {
+        EnsureFolder(Root + "/Materials");
+        EnsureFolder(Root + "/Scenes");
+
+        var scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
+
+        // ---------- Платформа ----------
+        var floor = GameObject.CreatePrimitive(PrimitiveType.Plane);
+        floor.name = "Floor";
+        floor.GetComponent<Renderer>().sharedMaterial = MakeMaterial("FloorMat", new Color(0.35f, 0.35f, 0.40f));
+
+        CreateWall("Wall_North", new Vector3(0f, 0.5f, 5.25f), new Vector3(11f, 1f, 0.5f));
+        CreateWall("Wall_South", new Vector3(0f, 0.5f, -5.25f), new Vector3(11f, 1f, 0.5f));
+        CreateWall("Wall_East", new Vector3(5.25f, 0.5f, 0f), new Vector3(0.5f, 1f, 11f));
+        CreateWall("Wall_West", new Vector3(-5.25f, 0.5f, 0f), new Vector3(0.5f, 1f, 11f));
+
+        // ---------- Цель ----------
+        var target = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        target.name = "Target";
+        target.tag = "goal";
+        target.transform.localPosition = new Vector3(3f, 0.5f, 3f);
+        target.GetComponent<Renderer>().sharedMaterial = MakeMaterial("TargetMat", new Color(0.20f, 0.80f, 0.30f));
+
+        // ---------- Агент ----------
+        var agentGo = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        agentGo.name = "__ENV__Agent";
+        agentGo.tag = "agent";
+        agentGo.transform.localPosition = new Vector3(0f, 0.5f, 0f);
+        agentGo.GetComponent<Renderer>().sharedMaterial = MakeMaterial("AgentMat", new Color(0.20f, 0.50f, 0.90f));
+        agentGo.AddComponent<Rigidbody>().mass = 1f;
+
+        var agent = agentGo.AddComponent<__ENV__Agent>();
+        agent.target = target.transform;
+        agent.MaxStep = 1000;
+
+        // Размерности должны совпадать с CollectObservations/OnActionReceived в Scripts/__ENV__Agent.cs
+        var behavior = agentGo.GetComponent<BehaviorParameters>();
+        behavior.BehaviorName = "__BEHAVIOR__";
+        behavior.BrainParameters.VectorObservationSize = 6;
+        behavior.BrainParameters.NumStackedVectorObservations = 1;
+        behavior.BrainParameters.ActionSpec = ActionSpec.MakeContinuous(2);
+        behavior.BehaviorType = BehaviorType.Default;
+
+        var requester = agentGo.AddComponent<DecisionRequester>();
+        requester.DecisionPeriod = 5;
+        requester.TakeActionsBetweenDecisions = true;
+
+        // ---------- Камера ----------
+        var cam = Camera.main;
+        if (cam != null)
+        {
+            cam.transform.position = new Vector3(0f, 10f, -12f);
+            cam.transform.rotation = Quaternion.Euler(40f, 0f, 0f);
+        }
+
+        EditorSceneManager.SaveScene(scene, ScenePath);
+        Debug.Log($"Сцена среды «__ENV__» собрана: {ScenePath}");
+    }
+
+    private static void CreateWall(string name, Vector3 position, Vector3 scale)
+    {
+        var wall = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        wall.name = name;
+        wall.tag = "wall";
+        wall.transform.localPosition = position;
+        wall.transform.localScale = scale;
+        wall.GetComponent<Renderer>().sharedMaterial = MakeMaterial("WallMat", new Color(0.60f, 0.60f, 0.65f));
+    }
+
+    private static Material MakeMaterial(string name, Color color)
+    {
+        var path = $"{Root}/Materials/{name}.mat";
+        var mat = AssetDatabase.LoadAssetAtPath<Material>(path);
+        if (mat == null)
+        {
+            var shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
+            mat = new Material(shader) { color = color };
+            AssetDatabase.CreateAsset(mat, path);
+        }
+        return mat;
+    }
+
+    /// <summary>Рекурсивно создаёт папку ассетов вида "Assets/a/b/c".</summary>
+    private static void EnsureFolder(string path)
+    {
+        var parts = path.Split('/');
+        var current = parts[0];
+        for (int i = 1; i < parts.Length; i++)
+        {
+            var next = $"{current}/{parts[i]}";
+            if (!AssetDatabase.IsValidFolder(next))
+                AssetDatabase.CreateFolder(current, parts[i]);
+            current = next;
+        }
+    }
+}

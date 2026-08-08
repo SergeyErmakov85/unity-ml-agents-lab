@@ -1,0 +1,32 @@
+# Python-зависимости для обучения агентов через mlagents-learn.
+#
+# Совместимость (проверено для этого проекта):
+#   Unity 6000.5.4f1
+#   com.unity.ml-agents 4.0.3   (communication API 1.5.0)
+#   mlagents               1.1.0 (communication API 1.5.0)
+#   Python                 3.10.12  (mlagents требует >=3.10.1,<=3.10.12)
+#
+# Установка: scripts\setup-python.ps1   (создаёт .venv через uv)
+# Ручная установка:
+#   uv venv --python 3.10.12 .venv
+#   .venv\Scripts\Activate.ps1
+#   uv pip install -r requirements.txt
+
+# Torch ставим явно и первым: официальная инструкция ML-Agents рекомендует
+# для Windows именно ~=2.2.1. Для GPU-сборки используйте
+#   scripts\setup-python.ps1 -Cuda cu121
+# (скрипт подставит --index-url https://download.pytorch.org/whl/cu121)
+torch~=2.2.1
+
+mlagents==1.1.0
+
+# Явно фиксируем то, что тянет mlagents, чтобы установка была воспроизводимой.
+mlagents-envs==1.1.0
+numpy>=1.23.5,<1.24.0
+protobuf>=3.6,<3.21
+grpcio>=1.11.0,<=1.53.2
+tensorboard>=2.14
+
+# mlagents/torch_utils импортирует pkg_resources, который удалён из setuptools 81+.
+# Без этого пина `mlagents-learn` падает с ModuleNotFoundError: No module named 'pkg_resources'.
+setuptools<81

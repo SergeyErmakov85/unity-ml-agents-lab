@@ -1,0 +1,41 @@
+# GridWorld 5×5 (TS-001) — нейросетевое обучение через mlagents-learn.
+#
+# Behavior Name задаётся в GridWorldSetup.cs: behavior.BehaviorName = "GridWorldQLearning"
+# Наблюдения: one-hot 25 (VectorObservationSize = 25, NumStackedVectorObservations = 1)
+# Действия:   Discrete, одна ветка размера 4 (N/S/E/W)
+# MaxStep агента = GridWorldEnvironment.maxSteps = 100
+#
+# Запуск:
+#   scripts\train.ps1 Greed_world -RunId gridworld-01
+# либо напрямую:
+#   mlagents-learn Assets/ML-ENVIRONMENTS/02-Examples/Greed_world/config/GridWorldQLearning.yaml --run-id=gridworld-01
+#
+# Табличный Q-learning (основной сценарий ТЗ) идёт мимо этого файла —
+# он читает GridWorldAgent.CurrentStateIndex напрямую.
+
+behaviors:
+  GridWorldQLearning:
+    trainer_type: ppo
+    hyperparameters:
+      # Эпизод короткий (<=100 шагов), пространство состояний крошечное —
+      # берём небольшие батчи и частые обновления.
+      batch_size: 32
+      buffer_size: 1024
+      learning_rate: 3.0e-4
+      beta: 5.0e-3          # повышенная энтропия: сетка требует исследования
+      epsilon: 0.2
+      lambd: 0.95
+      num_epoch: 3
+      learning_rate_schedule: linear
+    network_settings:
+      normalize: false      # вход — one-hot, нормализация не нужна
+      hidden_units: 64
+      num_layers: 2
+    reward_signals:
+      extrinsic:
+        gamma: 0.95         # соответствует табличному Q-learning из ТЗ
+        strength: 1.0
+    keep_checkpoints: 5
+    max_steps: 200000
+    time_horizon: 64
+    summary_freq: 2000

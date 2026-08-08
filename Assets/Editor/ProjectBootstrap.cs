@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEditorInternal;
@@ -16,11 +17,24 @@ public static class ProjectBootstrap
     private const string RendererPath = SettingsFolder + "/URP_Renderer.asset";
     private const string PipelinePath = SettingsFolder + "/URP_Asset.asset";
 
-    private static readonly string[] ScenePaths =
+    public const string EnvironmentsRoot = "Assets/ML-ENVIRONMENTS";
+
+    /// <summary>
+    /// Все сцены сред, найденные под <see cref="EnvironmentsRoot"/>.
+    /// Список не захардкожен: новая среда попадает в сборку автоматически.
+    /// </summary>
+    public static string[] ScenePaths
     {
-        "Assets/ML-ENVIRONMENTS/01-Basics/Hit_the_ball/Scenes/RLTrainingScene.unity",
-        "Assets/ML-ENVIRONMENTS/02-Examples/Greed_world/Scenes/GridWorld.unity",
-    };
+        get
+        {
+            var guids = AssetDatabase.FindAssets("t:Scene", new[] { EnvironmentsRoot });
+            var paths = new List<string>(guids.Length);
+            foreach (var guid in guids)
+                paths.Add(AssetDatabase.GUIDToAssetPath(guid));
+            paths.Sort(System.StringComparer.Ordinal);
+            return paths.ToArray();
+        }
+    }
 
     [MenuItem("Tools/RL/Configure Project")]
     public static void Configure()
@@ -50,13 +64,14 @@ public static class ProjectBootstrap
                 InternalEditorUtility.AddTag(tag);
         }
 
-        var scenes = new EditorBuildSettingsScene[ScenePaths.Length];
-        for (int i = 0; i < ScenePaths.Length; i++)
-            scenes[i] = new EditorBuildSettingsScene(ScenePaths[i], true);
+        var paths = ScenePaths;
+        var scenes = new EditorBuildSettingsScene[paths.Length];
+        for (int i = 0; i < paths.Length; i++)
+            scenes[i] = new EditorBuildSettingsScene(paths[i], true);
         EditorBuildSettings.scenes = scenes;
 
         AssetDatabase.SaveAssets();
-        Debug.Log("ProjectBootstrap: URP назначен, теги и сцены сборки настроены.");
+        Debug.Log($"ProjectBootstrap: URP назначен, теги настроены, сцен в сборке — {paths.Length}.");
     }
 
     /// <summary>Открывает все сцены сред по очереди — ошибки попадут в лог редактора.</summary>
@@ -70,10 +85,12 @@ public static class ProjectBootstrap
         }
     }
 
+    /// <summary>Точка входа для batch-режима: настройка + проверка сцен + проверка готовности к обучению.</summary>
     public static void ConfigureAndValidate()
     {
         Configure();
         ValidateScenes();
+        MLAgentsTrainingValidator.Validate();
     }
 
     /// <summary>Рекурсивно создаёт папку ассетов вида "Assets/a/b/c".</summary>

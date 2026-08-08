@@ -1,0 +1,85 @@
+using Unity.MLAgents;
+using Unity.MLAgents.Actuators;
+using Unity.MLAgents.Sensors;
+using UnityEngine;
+
+/// <summary>
+/// Среда «__ENV__»: агент учится доезжать до цели, не падая с платформы.
+/// Это рабочая заготовка — меняйте наблюдения, действия и награды под свою задачу.
+///
+/// Наблюдения (Space Size = 6):
+///   позиция цели (x, z), позиция агента (x, z), скорость агента (x, z)
+/// Действия: Continuous 2 — сила по осям X и Z.
+///
+/// ВАЖНО: при изменении числа наблюдений/действий синхронно правьте
+///   Editor/__ENV__Setup.cs (BrainParameters) — иначе mlagents-learn упадёт
+///   с несовпадением размерностей.
+/// </summary>
+[RequireComponent(typeof(Rigidbody))]
+public class __ENV__Agent : Agent
+{
+    [Header("Ссылки")]
+    public Transform target;
+
+    [Header("Параметры")]
+    public float forceMultiplier = 10f;
+    public float spawnRange = 4f;
+    public float reachDistance = 1.42f;
+
+    private Rigidbody rb;
+
+    public override void Initialize()
+    {
+        rb = GetComponent<Rigidbody>();
+    }
+
+    public override void OnEpisodeBegin()
+    {
+        rb.angularVelocity = Vector3.zero;
+        rb.linearVelocity = Vector3.zero;
+        transform.localPosition = new Vector3(0f, 0.5f, 0f);
+
+        target.localPosition = new Vector3(
+            Random.Range(-spawnRange, spawnRange),
+            0.5f,
+            Random.Range(-spawnRange, spawnRange));
+    }
+
+    public override void CollectObservations(VectorSensor sensor)
+    {
+        sensor.AddObservation(target.localPosition.x);    // 1
+        sensor.AddObservation(target.localPosition.z);    // 2
+        sensor.AddObservation(transform.localPosition.x); // 3
+        sensor.AddObservation(transform.localPosition.z); // 4
+        sensor.AddObservation(rb.linearVelocity.x);       // 5
+        sensor.AddObservation(rb.linearVelocity.z);       // 6
+    }
+
+    public override void OnActionReceived(ActionBuffers actions)
+    {
+        var control = new Vector3(actions.ContinuousActions[0], 0f, actions.ContinuousActions[1]);
+        rb.AddForce(control * forceMultiplier);
+
+        // Небольшой штраф за шаг — поощряет короткие траектории.
+        AddReward(-1f / MaxStep);
+
+        if (Vector3.Distance(transform.localPosition, target.localPosition) < reachDistance)
+        {
+            SetReward(1f);
+            EndEpisode();
+        }
+        else if (transform.localPosition.y < 0f)
+        {
+            SetReward(-1f);
+            EndEpisode();
+        }
+    }
+
+    /// <summary>Ручное управление (Behavior Type = Heuristic Only) — проверка сцены с клавиатуры.</summary>
+    public override void Heuristic(in ActionBuffers actionsOut)
+    {
+        var continuous = actionsOut.ContinuousActions;
+        continuous[0] = Input.GetAxis("Horizontal");
+        continuous[1] = Input.GetAxis("Vertical");
+    }
+}
