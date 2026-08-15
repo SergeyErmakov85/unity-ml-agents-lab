@@ -126,7 +126,7 @@ namespace LabRL.EditorTools
 
             EditorSceneManager.OpenScene(scenes[0], OpenSceneMode.Single);
 
-            var agents = UnityEngine.Object.FindObjectsByType<Agent>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            var agents = UnityEngine.Object.FindObjectsByType<Agent>(FindObjectsInactive.Include);
             if (agents.Length == 0)
                 issues.Add(new Issue(envId, "в сцене нет ни одного агента", true));
 

@@ -83,7 +83,7 @@ namespace LabRL.EditorTools
 
             EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Single);
 
-            var agents = UnityEngine.Object.FindObjectsByType<Agent>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            var agents = UnityEngine.Object.FindObjectsByType<Agent>(FindObjectsInactive.Include);
             if (agents.Length == 0) Fail($"в сцене {scenePath} нет агентов");
 
             foreach (var agent in agents)
@@ -155,7 +155,7 @@ namespace LabRL.EditorTools
         {
             EditorSceneManager.OpenScene(TempScene, OpenSceneMode.Single);
 
-            var agents = UnityEngine.Object.FindObjectsByType<Agent>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            var agents = UnityEngine.Object.FindObjectsByType<Agent>(FindObjectsInactive.Include);
             foreach (var agent in agents)
             {
                 var behavior = agent.GetComponent<BehaviorParameters>();

@@ -18,9 +18,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+
+if TYPE_CHECKING:  # pragma: no cover - только для аннотаций
+    from labrl.envs.state_encoders import StateEncoder
 
 
 @dataclass
@@ -67,15 +70,37 @@ class QLearning:
         num_actions: число действий (одна дискретная ветка).
         cfg: гиперпараметры.
 
+        encoder: как наблюдение среды превращается в индекс состояния **и как
+            то же преобразование попадает в граф ONNX**. По умолчанию —
+            :class:`labrl.envs.state_encoders.OneHotStateEncoder`: среда отдаёт
+            one-hot вектор состояния (`E01`, `E00`). Для непрерывного
+            наблюдения передаётся
+            :class:`labrl.envs.state_encoders.BoxDiscretizer` (`E02`).
+
     Таблица ``Q`` формы ``(num_states, num_actions)`` — единственное состояние
     алгоритма. Нейросети здесь нет: она появляется только на этапе экспорта,
-    где таблица оборачивается линейным слоем (см. :mod:`labrl.nets.tabular`).
+    где таблица оборачивается модулем, который выдаёт кодировщик
+    (см. :mod:`labrl.nets.tabular`, :mod:`labrl.nets.discretized`).
     """
 
-    def __init__(self, num_states: int, num_actions: int, cfg: QLearningConfig | None = None) -> None:
+    def __init__(
+        self,
+        num_states: int,
+        num_actions: int,
+        cfg: QLearningConfig | None = None,
+        encoder: "StateEncoder | None" = None,
+    ) -> None:
+        from labrl.envs.state_encoders import OneHotStateEncoder
+
         self.cfg = cfg or QLearningConfig()
         self.num_states = int(num_states)
         self.num_actions = int(num_actions)
+        self.encoder = encoder if encoder is not None else OneHotStateEncoder(self.num_states)
+        if self.encoder.num_states != self.num_states:
+            raise ValueError(
+                f"кодировщик задаёт {self.encoder.num_states} состояний, "
+                f"таблица рассчитана на {self.num_states}"
+            )
         self.q = np.full((self.num_states, self.num_actions), self.cfg.initial_q, dtype=np.float64)
         self.updates = 0
 
@@ -147,6 +172,22 @@ class QLearning:
             "updates": float(self.updates),
         }
 
+    def set_learning_rate(self, learning_rate: float) -> None:
+        """Меняет α — для расписания скорости обучения.
+
+        Зачем α вообще менять. Условие сходимости Роббинса–Монро требует,
+        чтобы шаг обучения убывал: сумма шагов расходится, сумма их квадратов
+        сходится. При **постоянном** α таблица не сходится, а бесконечно
+        колеблется вокруг решения с амплитудой порядка α·|TD-ошибка|. На задачах
+        предсказания это почти незаметно, а на задачах управления — фатально:
+        колебание Q переворачивает `argmax`, и жадная политика скачет между
+        хорошей и негодной от оценки к оценке. Именно это наблюдалось
+        в `E02_CartPoleUnity` (см. docs/07_TROUBLESHOOTING.md, T-11).
+        """
+        if not 0.0 < learning_rate <= 1.0:
+            raise ValueError(f"learning_rate должен быть в (0, 1], получено {learning_rate}")
+        self.cfg.learning_rate = float(learning_rate)
+
     # --- сохранение и экспорт -------------------------------------------
 
     def state_dict(self) -> dict[str, Any]:
@@ -163,16 +204,18 @@ class QLearning:
         self.updates = int(state.get("updates", 0))
 
     def policy_module(self):
-        """Модуль, экспортируемый в ONNX.
+        """Модуль, экспортируемый в ONNX. Строится кодировщиком наблюдений.
 
-        Таблица Q превращается в линейный слой без смещения: при one-hot
-        наблюдении ``onehot(s) @ Qᵀ == Q[s]``, то есть выход слоя поэлементно
-        равен строке таблицы. Экспортируется, таким образом, **та же самая**
-        политика, а не её приближение.
+        При one-hot наблюдении это линейный слой без смещения:
+        ``onehot(s) @ Qᵀ == Q[s]``, то есть выход слоя поэлементно равен строке
+        таблицы. При непрерывном наблюдении в граф дополнительно попадает сама
+        сетка дискретизации — иначе Unity истолковала бы вход иначе, чем
+        обучение (требование 10.7).
+
+        В обоих случаях экспортируется **та же самая** политика, а не её
+        приближение.
         """
-        from labrl.nets.tabular import OneHotQTable
-
-        return OneHotQTable.from_table(self.q)
+        return self.encoder.policy_module(self.q)
 
     def greedy_policy(self) -> np.ndarray:
         """``(num_states,)`` — жадное действие в каждом состоянии."""

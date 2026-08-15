@@ -97,7 +97,7 @@ namespace LabRL.DebugTools
 
         void LogDiagnostics()
         {
-            var agents = FindObjectsByType<AgentBase>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            var agents = FindObjectsByType<AgentBase>(FindObjectsInactive.Include);
             string first = "нет агентов";
             if (agents.Length > 0)
             {

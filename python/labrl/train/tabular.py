@@ -23,6 +23,7 @@ from typing import Callable
 import numpy as np
 
 from labrl.algos.tabular.q_learning import QLearning, Transition
+from labrl.envs.state_encoders import StateEncoder
 from labrl.envs.vec_unity_env import StepResult, VecUnityEnv
 from labrl.logging.tb_logger import TBLogger, Tags
 from labrl.utils.schedules import Schedule
@@ -70,9 +71,11 @@ class TabularTrainResult:
 def states_from_obs(obs: list[np.ndarray]) -> np.ndarray:
     """One-hot наблюдение -> индекс состояния.
 
-    Табличный метод работает с индексом, а Unity отдаёт one-hot: ``argmax``
-    и есть перевод между ними. Функция вынесена отдельно, потому что
-    используется и при сборе опыта, и при оценке.
+    Частный случай кодирования: среда отдаёт one-hot вектор, и ``argmax``
+    и есть перевод в индекс. Общий случай — кодировщик алгоритма
+    (:mod:`labrl.envs.state_encoders`): для непрерывного наблюдения это сетка
+    дискретизации, и она обязана попасть ещё и в граф ONNX. Функция оставлена
+    как самостоятельный помощник и как пояснение к простому случаю.
     """
     return np.argmax(obs[0], axis=1).astype(np.int64)
 
@@ -152,7 +155,7 @@ def evaluate_greedy(
     for _ in range(budget):
         if len(returns) >= episodes:
             break
-        actions = algo.greedy_action(states_from_obs(obs))[:, None].astype(np.int32)
+        actions = algo.greedy_action(algo.encoder.index(obs[0]))[:, None].astype(np.int32)
         result = vec.step(actions)
 
         running_return += result.reward
@@ -192,6 +195,7 @@ def train_q_learning(
     cfg: TabularTrainConfig | None = None,
     seed: int = 0,
     on_eval: Callable[[int, float, float], None] | None = None,
+    lr_schedule: Schedule | None = None,
 ) -> TabularTrainResult:
     """Обучает табличный Q-learning в среде Unity.
 
@@ -202,6 +206,9 @@ def train_q_learning(
         logger: логгер TensorBoard.
         cfg: параметры цикла.
         seed: сид генератора выбора случайных действий.
+        lr_schedule: расписание α. ``None`` — постоянное значение из конфига
+            метода. Убывающее α требуется условием сходимости Роббинса–Монро
+            (см. :meth:`labrl.algos.tabular.q_learning.QLearning.set_learning_rate`).
         on_eval: колбэк ``(step, mean_reward, success_rate)`` после каждой оценки —
             для прогресс-вывода в ноутбуке.
 
@@ -225,14 +232,16 @@ def train_q_learning(
 
     for step in range(1, cfg.total_steps + 1):
         epsilon = float(epsilon_schedule(step))
+        if lr_schedule is not None:
+            algo.set_learning_rate(float(lr_schedule(step)))
 
-        state = states_from_obs(obs)
+        state = algo.encoder.index(obs[0])
         action = algo.act(state, epsilon, rng)
         # Активные слоты — те, что действительно ждут действия. Действия
         # неактивных слотов среда игнорирует, но записывать их переходы нельзя.
         acted = vec.step(action[:, None].astype(np.int32))
 
-        batch = _build_batch(state, action, acted)
+        batch = _build_batch(state, action, acted, algo.encoder)
         metrics = algo.update(batch)
         result.transitions += int(batch.state.size)
 
@@ -292,7 +301,12 @@ def train_q_learning(
     return result
 
 
-def _build_batch(state: np.ndarray, action: np.ndarray, result: StepResult) -> Transition:
+def _build_batch(
+    state: np.ndarray,
+    action: np.ndarray,
+    result: StepResult,
+    encoder: "StateEncoder | None" = None,
+) -> Transition:
     """Собирает батч переходов из результата шага векторизованной среды.
 
     Берутся только слоты, вернувшие результат: либо завершившие эпизод
@@ -308,7 +322,9 @@ def _build_batch(state: np.ndarray, action: np.ndarray, result: StepResult) -> T
                           np.array([], dtype=bool))
 
     next_obs = np.where(done[:, None], result.final_obs[0], result.obs[0])
-    next_state = np.argmax(next_obs, axis=1).astype(np.int64)
+    next_state = (
+        np.argmax(next_obs, axis=1).astype(np.int64) if encoder is None else encoder.index(next_obs)
+    )
 
     return Transition(
         state=state[usable],

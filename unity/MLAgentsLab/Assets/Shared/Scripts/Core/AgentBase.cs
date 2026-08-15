@@ -48,6 +48,18 @@ namespace LabRL.Core
         /// <summary>Метка незавершённого эпизода. Ею же различается обрыв по времени.</summary>
         public const string RunningResult = "Running";
 
+        /// <summary>
+        /// Считается ли обрыв по <c>MaxStep</c> успехом.
+        ///
+        /// По умолчанию — нет: в средах «дойди до цели» (<c>E01</c>, <c>E03</c>)
+        /// исчерпание времени означает, что агент не справился. Но есть класс
+        /// сред «продержись как можно дольше» (<c>E02_CartPoleUnity</c>,
+        /// <c>E04_BallBalance</c>), где обрыв по времени — единственно возможный
+        /// успешный исход, и метрика <c>Env/SuccessRate</c> без этого различия
+        /// тождественно равна нулю.
+        /// </summary>
+        protected virtual bool TimeoutIsSuccess => false;
+
         BehaviorParameters m_Behavior;
         int m_EpisodeStartStep;
         int m_StepsAtEpisodeEnd;
@@ -119,7 +131,7 @@ namespace LabRL.Core
             if (m_EpisodeStarted && LastEpisodeResult == RunningResult)
             {
                 LastEpisodeResult = "Timeout";
-                MetricsRecorder.Success(false);
+                MetricsRecorder.Success(TimeoutIsSuccess);
                 MetricsRecorder.Histogram("EpisodeSteps", m_StepsAtEpisodeEnd - m_EpisodeStartStep);
                 EpisodeFinished?.Invoke(this, m_RewardAtEpisodeEnd, "Timeout");
             }
