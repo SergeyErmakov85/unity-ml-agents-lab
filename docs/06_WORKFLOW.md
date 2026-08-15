@@ -89,14 +89,28 @@ echo $LASTEXITCODE   # 0 = успех
 Режим `QUICK_RUN = True` — сокращённый бюджет, ≤ 5 минут, для проверки и CI.
 `QUICK_RUN = False` — полное обучение.
 
-Без ноутбука (CI, прогон по трём сидам):
+Без ноутбука (CI, прогон по трём сидам). Ключ `--quick` — смоук-тест
+конвейера: критерий приёмки при нём не проверяется, потому что на сокращённом
+бюджете он и не обязан достигаться.
 
 ```powershell
 python scripts\train.py --config configs\E03_RollerBall__dqn.yaml --seed 0 --quick
+
+# полный прогон по всем сидам конфига
+python scripts\train.py --config configs\E03_RollerBall__dqn.yaml --all-seeds
+
+# два обучения одновременно: разные порты связи с Unity
+python scripts\train.py --config configs\E04_BallBalance__ppo.yaml --all-seeds --worker-id 3
 ```
 
 Результаты — в `results/E##_<Name>/<algo>/<YYYYMMDD-HHMMSS>_seed<k>/`
 (структура — `docs/05_TENSORBOARD.md`, §5). Просмотр: `.\scripts\tb.ps1`.
+
+Сводка по всем прогонам с IQM и доверительными интервалами:
+
+```powershell
+python scripts\results.py --write docs\RESULTS.md
+```
 
 ## Шаг 5. Экспорт ONNX и верификация
 
@@ -126,9 +140,31 @@ result.raise_if_failed()      # провал блокирует приёмку (
    `Behavior Type` = `Inference Only`.
 4. Прогнать **20 эпизодов** и сравнить среднюю награду с Python-оценкой.
 
+Шаги 1–4 автоматизированы и выполняются одной командой:
+
+```powershell
+python scripts\check_inference.py --config configs\E03_RollerBall__dqn.yaml --python-reward 0.95
+```
+
+Скрипт собирает отдельный билд с назначенной моделью и `Inference Only`,
+прогоняет 20 эпизодов и печатает отношение Unity / Python.
+
 Критерий приёмки: награда в Unity ≥ **0.8 ×** награды в Python (требование 10.6).
 Ниже порога — расследование, а не «и так сойдёт». Типовые причины и их
 разбор — `docs/07_TROUBLESHOOTING.md`.
+
+### Модель в проекте Unity после быстрого прогона
+
+Ноутбук и `train.py` пишут модель по одному и тому же пути, поэтому запуск
+ноутбука в режиме `QUICK_RUN = True` затирает модель полного прогона моделью
+смоук-теста. Файл при этом остаётся валидным и проходит верификацию, но агент
+в Unity ведёт себя хуже, чем указано в карточке среды. Восстановить модели
+последних **полных** прогонов:
+
+```powershell
+python scripts\sync_models.py            # показать расхождения
+python scripts\sync_models.py --apply    # скопировать
+```
 
 ---
 

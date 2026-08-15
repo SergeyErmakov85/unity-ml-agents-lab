@@ -12,10 +12,22 @@
 Каждый пример доводится до конца: сцена → headless-сборка → ноутбук обучения →
 метрики в TensorBoard → веса в ONNX → **инференс обратно в Unity**.
 
-> **Статус:** Фаза 1 (каркас платформы). Готовы: структура репозитория,
-> Python-ядро `labrl`, общий Unity-код `Assets/Shared`, контракт ONNX.
-> Первые сквозные примеры — Фаза 2. Текущее состояние и открытые вопросы —
-> в [`PLAN.md`](PLAN.md).
+> **Статус:** Фаза 3 (тиражирование), батч Б1 закрыт. Готовы пять примеров:
+> `E00_Bandit`, `E01_GridWorld`, `E02_CartPoleUnity`, `E03_RollerBall`,
+> `E04_BallBalance` — каждый доведён до инференса ONNX в Unity.
+> Текущее состояние и открытые вопросы — в [`PLAN.md`](PLAN.md).
+
+## Готовые примеры
+
+| Пример | Задача | Действия | Алгоритмы | Урок |
+|---|---|---|---|---|
+| [`E00_Bandit`](docs/envs/E00_Bandit.md) | многорукий бандит | Discrete 1×5 | ε-greedy, UCB1, Thompson | 1.7 |
+| [`E01_GridWorld`](docs/envs/E01_GridWorld.md) | дойти до цели в сетке 5×5 | Discrete 1×4 | Value Iteration, табличный Q-learning | 1.3, 1.4 |
+| [`E02_CartPoleUnity`](docs/envs/E02_CartPoleUnity.md) | удержать шест на тележке | Discrete 1×2 | Q-learning с дискретизацией | 1.5 |
+| [`E03_RollerBall`](docs/envs/E03_RollerBall.md) | докатиться шаром до цели | Discrete 1×4 | DQN (Double) | 1.6 |
+| [`E04_BallBalance`](docs/envs/E04_BallBalance.md) | удержать шар на платформе | **Continuous 2** | A2C, PPO | 2.3, проект-1 |
+
+Сводка результатов с IQM и доверительными интервалами — [`docs/RESULTS.md`](docs/RESULTS.md).
 
 ---
 
@@ -114,6 +126,10 @@ python scripts\verify_onnx.py results\...\onnx\policy.onnx --discrete-branches 4
 | [`docs/04_ONNX_CONTRACT.md`](docs/04_ONNX_CONTRACT.md) | контракт экспорта ONNX для Unity |
 | [`docs/05_TENSORBOARD.md`](docs/05_TENSORBOARD.md) | обязательная схема метрик |
 | [`docs/06_WORKFLOW.md`](docs/06_WORKFLOW.md) | сквозной цикл разработки примера |
+| [`docs/07_TROUBLESHOOTING.md`](docs/07_TROUBLESHOOTING.md) | измеренные грабли и их разбор |
+| [`docs/RESULTS.md`](docs/RESULTS.md) | сводка результатов всех примеров |
+| [`docs/envs/`](docs/envs/) | карточка на каждую среду |
+| [`docs/algos/`](docs/algos/) | карточка на каждый алгоритм |
 | [`docs/ASSUMPTIONS.md`](docs/ASSUMPTIONS.md) | реестр допущений |
 | [`docs/adr/`](docs/adr/) | архитектурные решения |
 

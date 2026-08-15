@@ -1,6 +1,7 @@
 # 02_LESSON_MAP — Карта «урок → пример → алгоритм»
 
-**Статус документа:** `ЧЕРНОВИК` — требует подтверждения пользователя (гейт Ф0).
+**Статус документа:** `АКТУАЛЬНЫЙ` — карта подтверждена пользователем (гейт Ф0),
+статусы обновляются по мере закрытия примеров.
 **Дата:** 2026-08-15
 **Источник истины:** фактическое содержимое `C:\cyber-unity-learn`
 (`src/content/learningMap.ts`, `src/App.tsx`, страницы `src/pages/*.tsx`) — см. `docs/00_AUDIT.md`, раздел 2.
@@ -20,15 +21,15 @@
 |---|---|---|---|---|---|---|
 | `/courses/1-1` | Что такое RL? | Понятия MDP, exploration/exploitation | — | — | — | `CROSS` (теория) |
 | `/courses/1-2` | Установка окружения | Стек PyTorch + ML-Agents | — | — | `00_setup_check.ipynb` | `CROSS` (Фаза 1) |
-| `/courses/1-3` | MDP | Value Iteration, уравнения Беллмана | `E01` | `E01_GridWorld` | `E01_GridWorld__value_iteration.ipynb` | `TODO` |
-| `/courses/1-4` | Q-Learning: табличный метод | Табличный Q-learning, ε-greedy | `E01` | `E01_GridWorld` | `E01_GridWorld__q_learning.ipynb` | `TODO` |
-| `/courses/1-5` | CartPole — первый агент | Дискретизация + Q-learning, PyTorch-агент | `E02` | `E02_CartPoleUnity` | `E02_CartPoleUnity__q_learning.ipynb` | `TODO` |
-| `/courses/1-6` | DQN с нуля на PyTorch | **DQN** (replay, target net, Huber) | `E03` | `E03_RollerBall` | `E03_RollerBall__dqn.ipynb` | `TODO` |
-| `/courses/1-7` | Exploration vs Exploitation | Бандиты: ε-greedy, **UCB**, **Thompson** | `E00` | `E00_Bandit` | `E00_Bandit__bandits.ipynb` | `TODO` |
-| `/courses/project-1` | Проект-1: «Баланс в 3D» | Непрерывное управление, полный цикл | `E04` | `E04_BallBalance` | `E04_BallBalance__ppo.ipynb` | `TODO` |
+| `/courses/1-3` | MDP | Value Iteration, уравнения Беллмана | `E01` | `E01_GridWorld` | `E01_GridWorld__qlearning.ipynb` (раздел «эталон») | **`DONE`** |
+| `/courses/1-4` | Q-Learning: табличный метод | Табличный Q-learning, ε-greedy | `E01` | `E01_GridWorld` | `E01_GridWorld__qlearning.ipynb` | **`DONE`** |
+| `/courses/1-5` | CartPole — первый агент | Дискретизация + Q-learning | `E02` | `E02_CartPoleUnity` | `E02_CartPoleUnity__qlearning.ipynb` | **`DONE`** |
+| `/courses/1-6` | DQN с нуля на PyTorch | **DQN** (replay, target net, Huber) | `E03` | `E03_RollerBall` | `E03_RollerBall__dqn.ipynb` | **`DONE`** |
+| `/courses/1-7` | Exploration vs Exploitation | Бандиты: ε-greedy, **UCB**, **Thompson** | `E00` | `E00_Bandit` | `E00_Bandit__bandits.ipynb` | **`DONE`** |
+| `/courses/project-1` | Проект-1: «Баланс в 3D» | Непрерывное управление, полный цикл | `E04` | `E04_BallBalance` | `E04_BallBalance__ppo.ipynb` | **`DONE`** |
 | `/courses/2-1` | Policy Gradient | **REINFORCE**, baseline | `E05` | `E05_FoodCollector` | `E05_FoodCollector__reinforce.ipynb` | `TODO` |
 | `/courses/2-2` | PPO с нуля | **PPO**, clipped objective, **GAE** | `E06` | `E06_Hunter3D` | `E06_Hunter3D__ppo.ipynb` | `TODO` |
-| `/courses/2-3` | Непрерывные действия и Actor-Critic | **A2C**, гауссова политика | `E04` | `E04_BallBalance` | `E04_BallBalance__a2c.ipynb` | `TODO` |
+| `/courses/2-3` | Непрерывные действия и Actor-Critic | **A2C**, гауссова политика | `E04` | `E04_BallBalance` | `E04_BallBalance__a2c.ipynb` | **`DONE`** |
 | `/courses/2-4` | Reward Shaping | **PBRS**, sparse/dense, ловушки | `E06` | `E06_Hunter3D` | (раздел в ноутбуке E06) | `TODO` |
 | `/courses/2-5` | Параллельные среды | Векторизация N арен | — | все среды | — | `CROSS` (`labrl.envs.vec_unity_env`) |
 | `/courses/2-6` | TensorBoard и W&B | Схема метрик | — | все среды | — | `CROSS` (`labrl.logging`, раздел 11) |
@@ -47,13 +48,16 @@
 
 ## 2. Реестр примеров
 
-**Статусы обновлены 2026-08-15 по итогам Фазы 2.**
+**Статусы обновлены 2026-08-15 по итогам батча Б1 Фазы 3.**
 
 | `E##` | Статус | Чем подтверждён |
 |---|---|---|
+| `E00_Bandit` | **DONE** | три стратегии × 3 сида, IQM 0.7950; сожаление 0.0862 / 0.0074 / 0.0011; ONNX 13/13; инференс в Unity 20/20 `Optimal`, отношение 0.927. Карточка: `docs/envs/E00_Bandit.md` |
 | `E01_GridWorld` | **DONE** | 3 сида × награда 0.6800 = точный оптимум; ONNX 13/13; инференс в Unity 20/20 `Goal`, отношение 1.000. Карточка: `docs/envs/E01_GridWorld.md` |
+| `E02_CartPoleUnity` | **DONE** | Q-learning с дискретизацией, 3 сида, IQM 199.68 при пороге 195; ONNX 13/13 (сетка внутри графа); инференс в Unity 20/20 по 200 шагов, отношение 1.000. Карточка: `docs/envs/E02_CartPoleUnity.md` |
 | `E03_RollerBall` | **DONE** | DQN, успех 100 %; ONNX 13/13; инференс в Unity 20/20 `Goal`, отношение 1.004. Карточка: `docs/envs/E03_RollerBall.md` |
-| остальные | `PLANNED` | Фаза 3, батчами по 3 примера |
+| `E04_BallBalance` | **DONE** | PPO — IQM 100.00 (максимум среды), A2C — 97.12, по 3 сида при пороге 80; ONNX 13/13 для обоих; инференс в Unity 20/20 эпизодов до конца, отношение 1.000. Карточка: `docs/envs/E04_BallBalance.md` |
+| остальные | `PLANNED` | Фаза 3, батчи Б2–Б4 |
 
 ### Полный реестр
 
@@ -117,4 +121,4 @@
 2. Каждое изменение статуса сопровождается коммитом с кодом примера
    (`feat(E03): …` / `docs(E03): …`).
 3. Behavior Name в Unity **обязан** совпадать с `E##_<Name>` (правило 5.3).
-   Текущие имена `RollerAgent` и `GridWorldQLearning` подлежат переименованию в Фазе 1.
+   Переименование выполнено в Фазе 1; `SceneValidator` проверяет это на каждой сборке.
