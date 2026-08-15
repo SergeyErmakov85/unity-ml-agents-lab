@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using TMPro;
 using Unity.MLAgents;
 using Unity.MLAgents.Actuators;
@@ -17,8 +17,11 @@ using UnityEngine.UI;
 /// </summary>
 public static class GridWorldSetup
 {
-    private const string Root = "Assets/ML-ENVIRONMENTS/02-Examples/Greed_world";
-    private const string ScenePath = Root + "/Scenes/GridWorld.unity";
+    /// <summary>Идентификатор среды. Behavior Name в Unity обязан совпадать с ним (правило 5.3).</summary>
+    private const string EnvId = "E01_GridWorld";
+
+    private const string Root = "Assets/Envs/E01_GridWorld";
+    private const string ScenePath = Root + "/Scenes/E01_GridWorld.unity";
 
     private static readonly Color ColBackground = Hex("#202028");
     private static readonly Color ColGround = Hex("#2B2B33");
@@ -105,7 +108,7 @@ public static class GridWorldSetup
         agent.MaxStep = env.maxSteps;
 
         var behavior = agentGo.GetComponent<BehaviorParameters>();
-        behavior.BehaviorName = "GridWorldQLearning";
+        behavior.BehaviorName = EnvId;
         behavior.BrainParameters.VectorObservationSize = 25;
         behavior.BrainParameters.NumStackedVectorObservations = 1;
         behavior.BrainParameters.ActionSpec = ActionSpec.MakeDiscrete(4);

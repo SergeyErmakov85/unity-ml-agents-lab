@@ -1,5 +1,8 @@
+# Эталонный конфиг ШТАТНОГО тренера ML-Agents (mlagents-learn) — п. 12.5 инструкции.
+# Нужен только для сравнения «моя реализация ↔ эталон». Собственные конфиги — в configs/E##_<Name>__<algo>.yaml.
+# Запуск: mlagents-learn configs/mlagents/E03_RollerBall.yaml --run-id=<run-id>
 behaviors:
-  RollerAgent:
+  E03_RollerBall:
     trainer_type: ppo
     hyperparameters:
       batch_size: 64

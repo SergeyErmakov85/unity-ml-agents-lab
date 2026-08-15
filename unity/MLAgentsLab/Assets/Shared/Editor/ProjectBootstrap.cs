@@ -16,11 +16,25 @@ public static class ProjectBootstrap
     private const string RendererPath = SettingsFolder + "/URP_Renderer.asset";
     private const string PipelinePath = SettingsFolder + "/URP_Asset.asset";
 
-    private static readonly string[] ScenePaths =
+    private const string EnvsFolder = "Assets/Envs";
+
+    /// <summary>
+    /// Сцены сред обнаруживаются, а не перечисляются: любая сцена внутри
+    /// Assets/Envs/E##_&lt;Name&gt;/Scenes/ попадает в список сборки автоматически.
+    /// Порядок детерминирован (сортировка по пути), чтобы индексы сцен не «плавали».
+    /// </summary>
+    private static string[] ScenePaths
     {
-        "Assets/ML-ENVIRONMENTS/01-Basics/Hit_the_ball/Scenes/RLTrainingScene.unity",
-        "Assets/ML-ENVIRONMENTS/02-Examples/Greed_world/Scenes/GridWorld.unity",
-    };
+        get
+        {
+            var guids = AssetDatabase.FindAssets("t:Scene", new[] { EnvsFolder });
+            var paths = new string[guids.Length];
+            for (int i = 0; i < guids.Length; i++)
+                paths[i] = AssetDatabase.GUIDToAssetPath(guids[i]);
+            System.Array.Sort(paths, System.StringComparer.Ordinal);
+            return paths;
+        }
+    }
 
     [MenuItem("Tools/RL/Configure Project")]
     public static void Configure()
@@ -50,9 +64,10 @@ public static class ProjectBootstrap
                 InternalEditorUtility.AddTag(tag);
         }
 
-        var scenes = new EditorBuildSettingsScene[ScenePaths.Length];
-        for (int i = 0; i < ScenePaths.Length; i++)
-            scenes[i] = new EditorBuildSettingsScene(ScenePaths[i], true);
+        var scenePaths = ScenePaths;
+        var scenes = new EditorBuildSettingsScene[scenePaths.Length];
+        for (int i = 0; i < scenePaths.Length; i++)
+            scenes[i] = new EditorBuildSettingsScene(scenePaths[i], true);
         EditorBuildSettings.scenes = scenes;
 
         AssetDatabase.SaveAssets();

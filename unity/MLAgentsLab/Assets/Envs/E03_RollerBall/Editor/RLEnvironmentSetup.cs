@@ -1,4 +1,4 @@
-using Unity.MLAgents;
+﻿using Unity.MLAgents;
 using Unity.MLAgents.Actuators;
 using Unity.MLAgents.Policies;
 using UnityEditor;
@@ -14,8 +14,11 @@ using UnityEngine.SceneManagement;
 /// </summary>
 public static class RLEnvironmentSetup
 {
-    private const string Root = "Assets/ML-ENVIRONMENTS/01-Basics/Hit_the_ball";
-    private const string ScenePath = Root + "/Scenes/RLTrainingScene.unity";
+    /// <summary>Идентификатор среды. Behavior Name в Unity обязан совпадать с ним (правило 5.3).</summary>
+    private const string EnvId = "E03_RollerBall";
+
+    private const string Root = "Assets/Envs/E03_RollerBall";
+    private const string ScenePath = Root + "/Scenes/E03_RollerBall.unity";
 
     [MenuItem("Tools/RL/Build Training Scene")]
     public static void BuildTrainingScene()
@@ -59,7 +62,7 @@ public static class RLEnvironmentSetup
 
         // Behavior Parameters: Space Size = 8, Continuous 2 (X, Z)
         var behavior = agentGo.GetComponent<BehaviorParameters>();
-        behavior.BehaviorName = "RollerAgent";
+        behavior.BehaviorName = EnvId;
         behavior.BrainParameters.VectorObservationSize = 8;
         behavior.BrainParameters.NumStackedVectorObservations = 1;
         behavior.BrainParameters.ActionSpec = ActionSpec.MakeContinuous(2);
