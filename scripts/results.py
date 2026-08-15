@@ -31,8 +31,17 @@ sys.path.insert(0, str(REPO_ROOT / "python"))
 from labrl.eval.aggregate import interquartile_mean, stratified_bootstrap_iqm  # noqa: E402
 
 
-def collect_runs(results_root: Path) -> dict[tuple[str, str], list[dict]]:
-    """Собирает `metrics.json` всех прогонов, сгруппированные по (среда, алгоритм)."""
+def collect_runs(results_root: Path, include_quick: bool = False) -> dict[tuple[str, str], list[dict]]:
+    """Собирает `metrics.json` прогонов, сгруппированные по (среда, алгоритм).
+
+    По умолчанию **быстрые прогоны отбрасываются**. Это не косметика: смешивать
+    в одной сводке полные прогоны и смоук-тесты нельзя — IQM тогда описывает
+    неизвестно что. Признак берётся из `env_info.json`, который пишет
+    `scripts/train.py` рядом с метриками.
+
+    Каталоги отсортированы по времени, и при нескольких прогонах одного сида
+    в сводку идёт **последний** — тот, чей результат актуален.
+    """
     runs: dict[tuple[str, str], list[dict]] = defaultdict(list)
     for metrics_path in sorted(results_root.glob("*/*/*/metrics.json")):
         try:
@@ -40,9 +49,23 @@ def collect_runs(results_root: Path) -> dict[tuple[str, str], list[dict]]:
         except (OSError, json.JSONDecodeError) as exc:
             print(f"пропущен {metrics_path}: {exc}", file=sys.stderr)
             continue
+
+        info_path = metrics_path.parent / "env_info.json"
+        info = {}
+        if info_path.is_file():
+            try:
+                info = json.loads(info_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                info = {}
+
+        if bool(info.get("quick", False)) and not include_quick:
+            continue
+
         env_id = metrics_path.parents[2].name
         algo = metrics_path.parents[1].name
         data["_run_dir"] = str(metrics_path.parent.relative_to(REPO_ROOT))
+        data["_total_steps"] = info.get("total_steps")
+        data["_quick"] = bool(info.get("quick", False))
         runs[(env_id, algo)].append(data)
     return runs
 
@@ -78,7 +101,7 @@ def summarize(runs: list[dict]) -> dict:
         "mean": float(np.mean(scores)),
         "min": float(np.min(scores)),
         "max": float(np.max(scores)),
-        "steps": int(runs[-1].get("last_values", {}).get("__steps__", 0)) or None,
+        "steps": runs[-1].get("_total_steps"),
         "wall_time": float(np.sum([r.get("wall_time_sec", 0.0) for r in runs])),
         "missing_tags": sorted({t for r in runs for t in r.get("missing_required_tags", [])}),
     }
@@ -95,6 +118,10 @@ def render(runs: dict[tuple[str, str], list[dict]]) -> str:
         "",
         f"**Дата генерации:** {date.today().isoformat()}",
         "**Генератор:** `python scripts/results.py --write docs/RESULTS.md`",
+        "",
+        "В сводку входят только **полные** прогоны: смоук-тесты (`--quick`) отброшены,",
+        "иначе IQM описывал бы смесь разных бюджетов. При нескольких прогонах одного",
+        "сида берётся последний по времени.",
         "",
         "Итоговая метрика примера — **IQM** (interquartile mean) итоговых оценок",
         "по сидам с доверительным интервалом по стратифицированному бутстрэпу",
@@ -125,7 +152,7 @@ def render(runs: dict[tuple[str, str], list[dict]]) -> str:
         if not s["seeds"]:
             lines += ["Завершённых оценок нет.", ""]
             continue
-        lines.append(f"- сиды: {s['seed_list']}")
+        lines.append(f"- сиды: {s['seed_list']}, бюджет шагов: {s['steps']}")
         lines.append(f"- итоговые оценки: {[round(x, 4) for x in s['scores']]}")
         lines.append(f"- IQM: **{s['iqm']:.4f}**, среднее {s['mean']:.4f}")
         if s["missing_tags"]:
@@ -146,6 +173,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--results", default=str(REPO_ROOT / "results"))
     parser.add_argument("--write", help="куда записать Markdown; без него — печать в stdout")
+    parser.add_argument("--include-quick", action="store_true",
+                        help="включить смоук-прогоны (--quick); по умолчанию отбрасываются")
     args = parser.parse_args()
 
     results_root = Path(args.results)
@@ -153,7 +182,7 @@ def main() -> int:
         print(f"каталог результатов не найден: {results_root}", file=sys.stderr)
         return 1
 
-    runs = collect_runs(results_root)
+    runs = collect_runs(results_root, include_quick=args.include_quick)
     if not runs:
         print("прогонов не найдено", file=sys.stderr)
         return 1
