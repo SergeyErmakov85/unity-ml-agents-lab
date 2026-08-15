@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "labrl"
+version = "0.1.0"
+description = "Учебное ядро обучения с подкреплением для unity-ml-agents-lab"
+readme = "../README.md"
+license = { file = "../LICENSE" }
+requires-python = ">=3.10.1,<3.11"
+
+# Границы версий заданы сверху и снизу (требование 4.5). Нижние границы —
+# минимум, на котором код проверен; верхние — то, что диктует mlagents_envs
+# и совместимость с ним.
+#
+# Ключевое ограничение всего стека: mlagents_envs@release_23_tag требует
+# numpy>=1.23.5,<1.24.0 и protobuf>=3.6,<3.21 (источник: setup.py пакета).
+# Именно эти два пина определяют выбор версий onnx, onnxruntime и tensorboard —
+# более новые их версии требуют protobuf 4.x или numpy 2.x и с ML-Agents
+# несовместимы. Точный слепок установленного — python/requirements.lock.txt.
+dependencies = [
+    "numpy>=1.23.5,<1.24.0",
+    "protobuf>=3.20.2,<3.21",
+    "torch>=2.2.0,<2.3.0",
+    "onnx>=1.15.0,<1.16.0",
+    "onnxruntime>=1.17.0,<1.18.0",
+    "tensorboard>=2.14.0,<2.15.0",
+    "pyyaml>=6.0,<7.0",
+]
+
+[project.optional-dependencies]
+# mlagents_envs ставится не отсюда, а из git по тегу release_23_tag:
+#   pip install "git+https://github.com/Unity-Technologies/ml-agents.git@release_23_tag#subdirectory=ml-agents-envs"
+# На PyPI нужной версии нет (там максимум 0.28.0), поэтому объявить её
+# обычной зависимостью нельзя.
+dev = [
+    "pytest>=7.4,<9.0",
+    "ipykernel>=6.29,<7.0",
+    "matplotlib>=3.7,<4.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["labrl*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+filterwarnings = [
+    # gym 0.2x при импорте предупреждает о переходе на gymnasium; ML-Agents
+    # тянет gym как зависимость, повлиять на это мы не можем.
+    "ignore::DeprecationWarning:gym.*",
+]

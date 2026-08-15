@@ -1,6 +1,7 @@
 # 04_ONNX_CONTRACT — Контракт экспорта ONNX для Unity Inference Engine
 
-**Статус документа:** `DRAFT` — подлежит обязательной повторной сверке в Фазе 1.
+**Статус документа:** `VERIFIED` — сверено с установленным пакетом в Фазе 1
+(см. §0.1). Расхождения с черновиком Фазы 0 перечислены в §0.2.
 **Дата:** 2026-08-15
 **Основание:** `CLAUDE_Unity-ml-agents-lab.md`, раздел 10.
 
@@ -103,7 +104,7 @@ if export_memory_size > 0:
 | 4 | `continuous_action_output_shape` | константа | если `continuous_size > 0` | `(1,)` |
 | 5 | `deterministic_continuous_actions` | значение | если `continuous_size > 0` | `(batch, continuous_size)` |
 | 6 | `discrete_actions` | значение | если `discrete_size > 0` | `(batch, num_branches)` |
-| 7 | `discrete_action_output_shape` | константа | если `discrete_size > 0` | `(num_branches,)` |
+| 7 | `discrete_action_output_shape` | константа | если `discrete_size > 0` | `(1, num_branches)` |
 | 8 | `deterministic_discrete_actions` | значение | если `discrete_size > 0` | `(batch, num_branches)` |
 | 9 | `recurrent_out` | значение | если `memory_size > 0` | `(batch, 1, memory_size)` |
 
@@ -127,12 +128,19 @@ class SimpleActor(nn.Module, Actor):
     self.memory_size_vector        = nn.Parameter(torch.Tensor([int(self.network_body.memory_size)]), requires_grad=False)
 ```
 
-| Константа | Значение | Тип элемента |
-|---|---|---|
-| `version_number` | **3** (`ModelApiVersion.MLAgents2_0`) | float32 |
-| `memory_size` | `network_body.memory_size` — **0** для нерекуррентных политик | float32 |
-| `continuous_action_output_shape` | `continuous_size` (например `2`) | float32 |
-| `discrete_action_output_shape` | вектор размеров веток, например `[4]` или `[3, 3]` | float32 |
+| Константа | Значение | Форма | Тип элемента |
+|---|---|---|---|
+| `version_number` | **3** (`ModelApiVersion.MLAgents2_0`) | `(1,)` | float32 |
+| `memory_size` | `network_body.memory_size` — **0** для нерекуррентных политик | `(1,)` | float32 |
+| `continuous_action_output_shape` | `continuous_size` (например `2`) | `(1,)` | float32 |
+| `discrete_action_output_shape` | размеры веток, например `[[4]]` или `[[3, 3]]` | `(1, num_branches)` | float32 |
+
+> **Уточнение формы `discrete_action_output_shape`.** В черновике Фазы 0 форма
+> была записана как `(num_branches,)`. Фактически
+> `torch.Tensor([action_spec.discrete_branches])` оборачивает кортеж веток
+> в дополнительный список, то есть даёт `(1, num_branches)`: для одной ветки
+> размера 4 это тензор `[[4.0]]`, а не `[4.0]`. Наша обёртка воспроизводит
+> именно эту форму.
 
 Все четыре — обычные `nn.Parameter` с `requires_grad=False` (в нашей обёртке
 корректнее использовать `register_buffer`, результат в графе ONNX идентичен —
@@ -163,6 +171,22 @@ def exported_model_output(self):  return self.sample()
 **Вывод:** `discrete_actions` — это **индексы выбранных действий** формы
 `(batch, num_branches)`, а не логиты и не one-hot. Это подтверждает требование 10.4
 инструкции. `deterministic_discrete_actions` — `argmax` по вероятностям.
+
+> **Тип элемента обязан быть целым.** `torch.multinomial` и `torch.argmax`
+> возвращают `int64`, и ML-Agents этот тип не меняет. Unity читает тензор как
+> `Tensor<int>`:
+>
+> ```csharp
+> discreteBuffer[j] = ((Tensor<int>)tensorProxy.data)[agentIndex, j];
+> ```
+>
+> (`com.unity.ml-agents@4.0.3`, `Runtime/Inference/ApplierImpl.cs`,
+> `DiscreteActionOutputApplier`). Приведение выхода к `float` даёт **валидный**
+> ONNX, который тем не менее падает в Unity при инференсе. Непрерывный аналог
+> читается как `Tensor<float>` (`ContinuousActionOutputApplier`), то есть там
+> вещественный тип, наоборот, обязателен.
+>
+> Проверка типов входит в `labrl.export.onnx_verify`.
 
 ### 4.2. Непрерывные действия
 
