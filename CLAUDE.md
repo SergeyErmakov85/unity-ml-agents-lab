@@ -60,7 +60,7 @@ Scene rebuild (scenes are generated from code, never hand-authored — to change
 change its Setup script and rebuild):
 
 ```powershell
-& "C:\Program Files\Unity\Hub\Editor\6000.5.4f1\Editor\Unity.exe" -batchmode -quit `
+& "C:\Program Files\Unity\Hub\Editor\6000.5.8f1\Editor\Unity.exe" -batchmode -quit `
   -projectPath C:\unity-ml-agents-lab\unity\MLAgentsLab `
   -executeMethod GridWorldSetup.BuildScene -logFile build.log
 ```

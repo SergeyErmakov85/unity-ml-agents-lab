@@ -36,8 +36,15 @@ def tiny_net(in_dim: int, out_dim: int) -> nn.Module:
 
 
 def test_input_names_follow_contract():
-    assert contract_input_names(1) == ["obs_0", "action_masks", "recurrent_in"]
-    assert contract_input_names(3) == ["obs_0", "obs_1", "obs_2", "action_masks", "recurrent_in"]
+    """Маски входят в граф только у дискретной политики, память — только у рекуррентной.
+
+    Это не упрощение: torch.onnx.export выбрасывает неиспользуемые входы,
+    и Unity ждёт ровно такой граф (SentisModelParamLoader.CheckInputTensorPresence).
+    """
+    assert contract_input_names(DISCRETE_SPEC, 1) == ["obs_0", "action_masks"]
+    assert contract_input_names(DISCRETE_SPEC, 3) == ["obs_0", "obs_1", "obs_2", "action_masks"]
+    assert contract_input_names(CONTINUOUS_SPEC, 1) == ["obs_0"]
+    assert contract_input_names(DISCRETE_SPEC, 1, memory_size=8) == ["obs_0", "action_masks", "recurrent_in"]
 
 
 def test_output_names_and_order_for_discrete():
@@ -195,29 +202,33 @@ def test_exported_graph_accepts_dynamic_batch(tmp_path):
             {
                 "obs_0": np.zeros((batch, 25), dtype=np.float32),
                 "action_masks": np.ones((batch, 4), dtype=np.float32),
-                "recurrent_in": np.zeros((batch, 1, 0), dtype=np.float32),
             },
         )
         assert outputs[0].shape == (batch, 1)
 
 
 def test_verification_detects_wrong_action_spec(tmp_path):
-    """Верификация обязана падать при расхождении спецификации и модели."""
+    """Верификация обязана падать при расхождении спецификации и модели.
+
+    Ветки (2, 2) дают ту же суммарную ширину масок, что и (4,), поэтому граф
+    прогоняется без ошибок — и расхождение ловится именно проверкой константы
+    `discrete_action_output_shape`, а не побочным падением прогона.
+    """
     policy = tiny_net(25, 4)
     path = export_policy_to_onnx(policy, DISCRETE_SPEC, [(25,)], tmp_path / "w.onnx")
 
-    wrong = ActionSpecLite(discrete_branches=(7,))
+    wrong = ActionSpecLite(discrete_branches=(2, 2))
     result = verify_onnx_model(path, policy, wrong, [(25,)])
 
     assert not result.passed
-    assert any("discrete_action_output_shape" in name for name, _ in result.failures)
+    assert any("discrete_action_output_shape" in name for name, _ in result.failures), result.report()
 
 
 def test_failed_verification_blocks_acceptance(tmp_path):
     """Провал верификации обязан быть исключением, а не строчкой в логе (10.5)."""
     policy = tiny_net(25, 4)
     path = export_policy_to_onnx(policy, DISCRETE_SPEC, [(25,)], tmp_path / "f.onnx")
-    result = verify_onnx_model(path, policy, ActionSpecLite(discrete_branches=(7,)), [(25,)])
+    result = verify_onnx_model(path, policy, ActionSpecLite(discrete_branches=(2, 2)), [(25,)])
 
     with pytest.raises(AssertionError, match="верификация ONNX провалена"):
         result.raise_if_failed()

@@ -79,7 +79,7 @@ def main() -> int:
     obs_shapes = obs_shapes_from_model(model)
     result.add("наблюдения найдены", len(obs_shapes) > 0, f"формы: {obs_shapes}")
 
-    expected_inputs = set(contract_input_names(len(obs_shapes)))
+    expected_inputs = set(contract_input_names(spec, len(obs_shapes), args.memory_size))
     expected_outputs = set(contract_output_names(spec, args.memory_size))
     actual_inputs = {i.name for i in model.graph.input}
     actual_outputs = {o.name for o in model.graph.output}
@@ -96,8 +96,10 @@ def main() -> int:
     for batch in (1, 64):
         feed = {f"obs_{i}": rng.standard_normal((batch, *shape)).astype(np.float32)
                 for i, shape in enumerate(obs_shapes)}
-        feed["action_masks"] = np.ones((batch, mask_size), dtype=np.float32)
-        feed["recurrent_in"] = np.zeros((batch, 1, args.memory_size), dtype=np.float32)
+        if mask_size > 0:
+            feed["action_masks"] = np.ones((batch, mask_size), dtype=np.float32)
+        if args.memory_size > 0:
+            feed["recurrent_in"] = np.zeros((batch, 1, args.memory_size), dtype=np.float32)
         try:
             values = dict(zip(out_names, session.run(out_names, feed)))
             result.add(f"прогон onnxruntime, батч {batch}", True)

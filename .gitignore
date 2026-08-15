@@ -106,6 +106,7 @@ unity/MLAgentsLab/[Aa]ssets/AssetStoreTools*
 __pycache__/
 *.pyc
 *.pyo
+*.egg-info/
 .venv/
 venv/
 .pytest_cache/
@@ -116,3 +117,8 @@ venv/
 # Прогоны обучения: каталог игнорируется целиком, кроме описания схемы
 /results/*
 !/results/README.md
+
+# Генерируется com.unity.test-framework.performance при каждом запуске редактора:
+# содержит список пакетов и параметры машины, то есть меняется у каждого разработчика.
+unity/MLAgentsLab/[Aa]ssets/Resources/PerformanceTestRun*.json
+unity/MLAgentsLab/[Aa]ssets/Resources/PerformanceTestRun*.json.meta

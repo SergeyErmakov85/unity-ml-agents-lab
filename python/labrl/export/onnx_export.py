@@ -9,11 +9,17 @@
 
 Ключевая структура::
 
-    входы:  obs_0 … obs_{N-1}, action_masks, recurrent_in
+    входы:  obs_0 … obs_{N-1}
+            [action_masks]  — только при дискретных действиях
+            [recurrent_in]  — только при memory_size > 0
     выходы: version_number, memory_size,
             [continuous_actions, continuous_action_output_shape, deterministic_continuous_actions]
             [discrete_actions,   discrete_action_output_shape,   deterministic_discrete_actions]
             [recurrent_out]
+
+Квадратные скобки здесь не «опционально по вкусу», а фактическое поведение:
+``torch.onnx.export`` выбрасывает из графа неиспользуемые входы, и Unity ждёт
+ровно такой граф (см. :func:`contract_input_names`).
 """
 
 from __future__ import annotations
@@ -64,9 +70,26 @@ class ActionSpecLite:
             raise ValueError("пространство действий пусто: нужен continuous_size > 0 или хотя бы одна ветка")
 
 
-def contract_input_names(num_obs: int) -> list[str]:
-    """Имена входов в порядке контракта (§1)."""
-    return [f"obs_{i}" for i in range(num_obs)] + ["action_masks", "recurrent_in"]
+def contract_input_names(spec: _HasActionSpec, num_obs: int, memory_size: int = 0) -> list[str]:
+    """Имена входов **фактического графа** в порядке контракта (§1).
+
+    Тонкость, которую легко принять за ошибку. ``ModelSerializer`` из ML-Agents
+    объявляет ``input_names`` всегда как ``obs_i + action_masks + recurrent_in``,
+    но ``torch.onnx.export`` **выбрасывает из графа входы, которые модель
+    не использует**: маски нужны только дискретной политике, память — только
+    рекуррентной. Поэтому в экспортированном ML-Agents графе непрерывной
+    нерекуррентной политики есть только ``obs_i``.
+
+    Unity ждёт ровно этого: ``action_masks`` требуется, лишь когда у модели есть
+    дискретные выходы, а ``recurrent_in`` — лишь когда ``memory_size > 0``
+    (``com.unity.ml-agents@4.0.3``, ``SentisModelParamLoader.CheckInputTensorPresence``).
+    """
+    names = [f"obs_{i}" for i in range(num_obs)]
+    if len(spec.discrete_branches) > 0:
+        names.append("action_masks")
+    if memory_size > 0:
+        names.append("recurrent_in")
+    return names
 
 
 def contract_output_names(spec: _HasActionSpec, memory_size: int = 0) -> list[str]:
@@ -275,7 +298,7 @@ def export_policy_to_onnx(
     dummy_masks = torch.ones((1, max(wrapper.mask_size, 0)), dtype=torch.float32)
     dummy_memory = torch.zeros((1, 1, memory_size), dtype=torch.float32)
 
-    input_names = contract_input_names(len(obs_shapes))
+    input_names = contract_input_names(action_spec, len(obs_shapes), memory_size)
     output_names = contract_output_names(action_spec, memory_size)
 
     # dynamic_axes по батчу — для всех входов и для стохастических выходов

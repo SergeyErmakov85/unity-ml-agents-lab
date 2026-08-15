@@ -160,18 +160,53 @@ def open_unity_env(
 
     env.reset()
 
-    if env_id not in env.behavior_specs:
-        available = list(env.behavior_specs)
+    try:
+        behavior_key = resolve_behavior_name(env_id, list(env.behavior_specs))
+    except KeyError:
         env.close()
+        raise
+
+    return UnityEnvHandle(
+        env=env,
+        channels=channels,
+        behavior_name=behavior_key,
+        spec=env.behavior_specs[behavior_key],
+    )
+
+
+def resolve_behavior_name(env_id: str, available: list[str]) -> str:
+    """Находит полное имя поведения, соответствующее идентификатору среды.
+
+    Unity отдаёт **полное** имя поведения — `BehaviorName?team=<TeamId>`
+    (`BehaviorParameters.FullyQualifiedBehaviorName`), поэтому среда с
+    Behavior Name `E01_GridWorld` и TeamId 0 видна из Python как
+    ``E01_GridWorld?team=0``. Идентификатор среды при этом остаётся без
+    суффикса: команда — свойство сцены, а не примера.
+
+    Args:
+        env_id: идентификатор среды `E##_<Name>`.
+        available: ключи `env.behavior_specs`.
+
+    Returns:
+        Ключ, под которым поведение зарегистрировано в среде.
+
+    Raises:
+        KeyError: подходящего поведения нет, либо их несколько (несколько
+            команд одного поведения — случай self-play, который обязан
+            обрабатываться явно, а не выбором «первого попавшегося»).
+    """
+    matches = [name for name in available if name == env_id or name.startswith(env_id + "?team=")]
+
+    if not matches:
         raise KeyError(
             f"в среде нет поведения {env_id!r}; доступны: {available}.\n"
             "Behavior Name в Unity обязан совпадать с идентификатором среды (правило 5.3): "
             "проверьте BehaviorParameters на агенте или пересоберите сцену Setup-скриптом."
         )
-
-    return UnityEnvHandle(
-        env=env,
-        channels=channels,
-        behavior_name=env_id,
-        spec=env.behavior_specs[env_id],
-    )
+    if len(matches) > 1:
+        raise KeyError(
+            f"идентификатору {env_id!r} соответствует несколько поведений: {matches}. "
+            "Несколько команд одного поведения (self-play) требуют явного выбора — "
+            "передайте полное имя вида 'E##_Name?team=N'."
+        )
+    return matches[0]

@@ -265,3 +265,139 @@ install_requires=[
 **Расхождение с ожиданиями инструкции 4.3:** установленный C#-пакет — 4.0.x, а не 3.x;
 это делает актуальным Python-стек ветки `release_23_tag`, а не Release 22.
 Решение требуется от пользователя (вопрос Q1 в `PLAN.md`).
+
+---
+
+## 6. Фаза 1: стек фактически установлен и проверен
+
+**Дата:** 2026-08-15. Раздел заменяет статусы `BLOCKED`/`NOT VERIFIED` выше
+для всего, что относится к Python. Блокеры B-1 и B-2 сняты.
+
+### 6.1. Что и как установлено
+
+| Компонент | Версия | Как установлено |
+|---|---|---|
+| Python | 3.10.11 | `winget install --id Python.Python.3.10 --version 3.10.11 --scope user` |
+| Окружение | `python/.venv` | `py -3.10 -m venv python\.venv` |
+| PyTorch | 2.2.1+cu121 | `pip install torch==2.2.1 --index-url https://download.pytorch.org/whl/cu121` |
+| `mlagents_envs` | 1.2.0.dev0 (`release_23_tag`) | из локальной копии файлов тега, см. A-14 и T-2 |
+| `mlagents` | 1.2.0.dev0 (`release_23_tag`) | там же |
+| `labrl` | 0.1.0 | `pip install -e python --no-deps` |
+
+Про способ установки ML-Agents. Штатная команда
+`pip install "git+https://github.com/Unity-Technologies/ml-agents.git@release_23_tag#subdirectory=…"`
+на этой машине упирается в ограничение скорости git-эндпоинтов GitHub (~16 КБ/с,
+измерено; `raw.githubusercontent.com` и `packages.unity.com` при этом работают
+на полной скорости). Файлы обоих подкаталогов тега скачаны с `raw` и установлены
+из локального каталога. Содержимое определяется тегом, поэтому код идентичен;
+подробности — `docs/07_TROUBLESHOOTING.md`, T-2.
+
+### 6.2. Вывод команд верификации
+
+```
+> python -c "import sys,numpy,torch,onnx,onnxruntime,mlagents,mlagents_envs,google.protobuf as pb,tensorboard; ..."
+python 3.10.11
+numpy 1.23.5
+torch 2.2.1+cu121 cuda 12.1 True
+onnx 1.15.0
+onnxruntime 1.17.3
+mlagents C:\unity-ml-agents-lab\python\.venv\lib\site-packages\mlagents\__init__.py
+mlagents_envs 1.2.0.dev0
+protobuf 3.20.3
+tensorboard 2.20.0
+```
+
+`torch.cuda.is_available() == True` — GPU (GTX 1650) доступен для обучения.
+
+### 6.3. `pip check` (требование 4.4)
+
+```
+> python -m pip check
+No broken requirements found.
+```
+
+Конфликтов нет. Границы версий, которые этот результат обеспечивают, зафиксированы
+в `python/pyproject.toml`; определяющее ограничение — `mlagents_envs`:
+`numpy>=1.23.5,<1.24.0` и `protobuf>=3.6,<3.21` (источник — `ml-agents-envs/setup.py`
+тега `release_23_tag`). Именно они задают выбор `onnx==1.15.0` и `onnxruntime 1.17.x`.
+
+Точный слепок — `python/requirements.lock.txt` (55 пакетов).
+
+### 6.4. `pytest` каркаса
+
+```
+> python -m pytest tests -q
+........................................................................ [ 96%]
+...                                                                      [100%]
+75 passed
+```
+
+Покрыто: контракт экспорта ONNX (имена, типы, константы, opset, паритет
+с PyTorch, диапазоны действий), различение `terminated` / `truncated`
+в векторизованной обёртке, схема конфигов, расписания, IQM с бутстрэпом,
+обязательные теги TensorBoard, структура каталога прогона.
+
+### 6.5. Unity
+
+| Что | Значение | Источник |
+|---|---|---|
+| Установленный редактор | **6000.5.8f1** (`5cb7df797b7d`) | `C:\Program Files\Unity\Hub\Editor\6000.5.8f1` |
+| `ProjectVersion.txt` | приведён к 6000.5.8f1 | допущение A-20 |
+| `com.unity.ml-agents` | 4.0.3 — **без изменений** | `Packages/manifest.json` |
+| `com.unity.ai.inference` | 2.6.1 — **без изменений** | там же |
+| URP | 17.5.0 — без изменений | там же |
+
+Пакеты, обновлённые редактором при первом импорте, и удалённый
+`com.unity.ai.assistant` — см. допущения A-21 и A-22.
+
+### 6.6. Проверки на стороне Unity (выполнены, с выводом)
+
+| Проверка | Команда | Результат |
+|---|---|---|
+| Компиляция проекта и открытие сцен | `-executeMethod ProjectBootstrap.ConfigureAndValidate` | код возврата **0**, `error CS` — 0 шт.; «сцена открыта без сбоев» для `E01_GridWorld` (4 объекта) и `E03_RollerBall` (9 объектов) |
+| Валидация сцен | `-executeMethod LabRL.EditorTools.SceneValidator.ValidateAllBatch` | код возврата **1**: 2 ошибки, 2 предупреждения — см. ниже |
+| Headless-сборка | `python scripts/build_env.py E01_GridWorld` | код возврата **0**, `E01_GridWorld собран за 00:06:01`, 132 685 497 байт |
+| Подключение Python к билду | `labrl.envs.unity_env` + `VecUnityEnv` | подключение установлено, размерности напечатаны — см. §6.7 |
+
+Замечания `SceneValidator` — это **реальные** несоответствия существующих сред
+стандарту 7.2, а не сбой валидатора:
+
+```
+[предупреждение] E01_GridWorld: в ENV_SPEC.md нет строки-контракта <!-- validator: ... -->
+[ОШИБКА]        E01_GridWorld: Agent: агент вне TrainingArea (нет TrainingAreaBase среди родителей)
+[предупреждение] E03_RollerBall: в ENV_SPEC.md нет строки-контракта <!-- validator: ... -->
+[ОШИБКА]        E03_RollerBall: RollerAgent: агент вне TrainingArea
+```
+
+Behavior Name, `DecisionRequester` и явный `MaxStep` проверку прошли —
+переименование поведений при реструктуризации сработало. Приведение обеих сред
+к стандарту 7.2 — работа Фазы 2.
+
+### 6.7. Гейт Ф1: подключение к headless-билду
+
+```
+behavior: E01_GridWorld?team=0
+наблюдения (1 сенсоров):
+  obs_0: shape=(25,)  имя сенсора: 'VectorSensor_size25'
+действия: непрерывных 0, дискретные ветки (4,)
+
+арен (параллельных сред): 1
+формы наблюдений батчем: [(1, 25)]
+шаг   0: reward=[-0.04] terminated=[False] truncated=[False] active=[ True]
+шаг  20: reward=[-1.04] terminated=[ True] truncated=[False] active=[ True]
+всего завершённых эпизодов: 3
+```
+
+Что этим подтверждено: размерность наблюдения совпадает с ТЗ среды (one-hot 25),
+пространство действий — одна дискретная ветка из 4, награды соответствуют
+функции награды (`-0.04` за шаг, `-1.0` за ловушку), а **различение
+`terminated` / `truncated` работает на живой среде**: попадание в ловушку —
+истинное завершение, а не обрыв по `MaxStep`.
+
+Отдельная находка. Unity отдаёт **полное** имя поведения `E01_GridWorld?team=0`
+(`BehaviorParameters.FullyQualifiedBehaviorName`), а не `E01_GridWorld`. Обёртка
+приводит идентификатор среды к полному имени (`resolve_behavior_name`), покрыто
+тестами `python/tests/test_behavior_name.py`.
+
+**Editor-режим гейта Ф1 остаётся невыполненным:** он требует нажатия Play
+в открытом редакторе, то есть действия пользователя.

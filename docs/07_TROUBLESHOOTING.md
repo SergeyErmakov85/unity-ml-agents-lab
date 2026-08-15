@@ -76,6 +76,37 @@ py -3.10 -m venv python\.venv
 
 **Решение.** Использовать 4.0.3+. Зафиксировано в `Packages/manifest.json`.
 
+### T-6. Unity в batch-режиме зависает на инициализации Asset Database
+
+**Симптом.** `Unity.exe -batchmode -quit -executeMethod …` доходит до строки
+`Application.AssetDatabase Initial Refresh Start` и замирает: лог не растёт,
+процесс жив и «отвечает», но потребляет 4–5 секунд CPU за десять минут.
+Повторный запуск падает сразу после `Successfully changed project path`
+с кодом возврата 1 — потому что предыдущий, зависший процесс всё ещё держит
+`Temp/UnityLockfile`.
+
+**Причина.** Пакет `com.unity.ai.assistant` 2.15.0-pre.1 (облачный редакторный
+помощник в статусе pre-release). Первый импорт проекта после его удаления из
+`manifest.json` прошёл до конца за ~3 минуты: 3,2 МБ лога, 98 с CPU,
+`ProjectBootstrap` отработал, код возврата 0.
+
+**Решение.**
+
+1. Снять зависшие процессы и удалить lock-файл:
+
+   ```powershell
+   Get-Process -Name "Unity","UnityPackageManager","UnityCrashHandler64" -EA SilentlyContinue | Stop-Process -Force
+   Remove-Item .\unity\MLAgentsLab\Temp\UnityLockfile -Force -EA SilentlyContinue
+   ```
+
+2. Убрать `com.unity.ai.assistant` из `Packages/manifest.json` (допущение A-22).
+
+**Диагностический приём.** `& $unity …` в PowerShell не всегда заполняет
+`$LASTEXITCODE` для отсоединившегося процесса Unity — код возврата надёжно
+виден через `Start-Process -PassThru -Wait` и `$proc.ExitCode`.
+
+**Дата:** 2026-08-15.
+
 ### T-5. `TensorNames` из ML-Agents недоступен из кода проекта
 
 **Симптом.** `Unity.MLAgents.Inference.TensorNames` не виден из скриптов

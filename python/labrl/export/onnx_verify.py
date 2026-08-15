@@ -137,7 +137,7 @@ def verify_onnx_model(
     )
 
     # --- 3. Имена входов и выходов --------------------------------------
-    expected_inputs = set(contract_input_names(len(obs_shapes)))
+    expected_inputs = set(contract_input_names(action_spec, len(obs_shapes), memory_size))
     expected_outputs = set(contract_output_names(action_spec, memory_size))
     actual_inputs = {i.name for i in model.graph.input}
     actual_outputs = {o.name for o in model.graph.output}
@@ -177,12 +177,16 @@ def verify_onnx_model(
     session = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
     mask_size = int(sum(action_spec.discrete_branches))
     out_names = [o.name for o in session.get_outputs()]
+    session_inputs = {i.name for i in session.get_inputs()}
 
     runs: dict[int, dict[str, np.ndarray]] = {}
     for batch in SHAPE_BATCHES:
         feed = _make_feed(obs_shapes, batch, mask_size, memory_size, sample_obs if batch == 64 else None)
         try:
-            values = session.run(out_names, feed)
+            # В графе есть только те входы, которые модель действительно
+            # использует, поэтому лишние ключи отбрасываются: onnxruntime
+            # считает неизвестное имя входа ошибкой.
+            values = session.run(out_names, {k: v for k, v in feed.items() if k in session_inputs})
             runs[batch] = dict(zip(out_names, values))
             result.add(f"прогон onnxruntime, батч {batch}", True)
         except Exception as exc:  # noqa: BLE001
@@ -204,7 +208,7 @@ def verify_onnx_model(
     if 64 in runs:
         feed64 = _make_feed(obs_shapes, 64, mask_size, memory_size, sample_obs)
         wrapper = MLAgentsPolicyWrapper(policy, action_spec, memory_size, strategy).eval()
-        torch_inputs = [torch.from_numpy(feed64[name]) for name in contract_input_names(len(obs_shapes))]
+        torch_inputs = [torch.from_numpy(feed64[name]) for name in _forward_arg_names(len(obs_shapes))]
         with torch.no_grad():
             torch_out = wrapper(*torch_inputs)
         torch_named = dict(zip(contract_output_names(action_spec, memory_size), torch_out))
@@ -232,6 +236,15 @@ def verify_onnx_model(
     return result
 
 
+def _forward_arg_names(num_obs: int) -> list[str]:
+    """Порядок аргументов ``MLAgentsPolicyWrapper.forward``.
+
+    Отличается от имён входов графа: ``forward`` всегда принимает маски
+    и память, даже если те не попадают в экспортированный граф.
+    """
+    return [f"obs_{i}" for i in range(num_obs)] + ["action_masks", "recurrent_in"]
+
+
 def _make_feed(
     obs_shapes: Sequence[tuple[int, ...]],
     batch: int,
@@ -239,7 +252,7 @@ def _make_feed(
     memory_size: int,
     sample_obs: Sequence[np.ndarray] | None,
 ) -> dict[str, np.ndarray]:
-    """Собирает вход для onnxruntime по контракту."""
+    """Собирает полный набор входов: и для графа, и для вызова ``forward``."""
     rng = np.random.default_rng(0)
     feed: dict[str, np.ndarray] = {}
     for i, shape in enumerate(obs_shapes):
@@ -284,6 +297,20 @@ def _check_ranges(
             "диапазон непрерывных действий", -1.0 <= lo and hi <= 1.0,
             f"[{lo:.4f}, {hi:.4f}], допустимо [-1, 1] (clamp ±{CONTINUOUS_CLIP:g} / {CONTINUOUS_CLIP:g})",
         )
+    if not action_spec.discrete_branches:
+        return
+
+    # Верификатор не имеет права падать на «неправильной» модели: его задача —
+    # сообщить о несоответствии, а не выбросить IndexError. Число колонок
+    # выхода сверяется до обращения к ним.
+    columns = outputs["discrete_actions"].shape[1]
+    if columns != len(action_spec.discrete_branches):
+        result.add(
+            "число дискретных веток на выходе", False,
+            f"в модели {columns} колонок, в ActionSpec {len(action_spec.discrete_branches)} веток",
+        )
+        return
+
     for branch_idx, branch_size in enumerate(action_spec.discrete_branches):
         vals = outputs["discrete_actions"][:, branch_idx]
         integral = bool(np.all(vals == np.floor(vals)))

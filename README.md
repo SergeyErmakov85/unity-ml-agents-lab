@@ -46,7 +46,7 @@ unity-ml-agents-lab/
 
 | Что | Версия | Проверка |
 |---|---|---|
-| Unity | **6000.5.4f1** | `unity/MLAgentsLab/ProjectSettings/ProjectVersion.txt` |
+| Unity | **6000.5.8f1** | `unity/MLAgentsLab/ProjectSettings/ProjectVersion.txt` |
 | `com.unity.ml-agents` | 4.0.3 | `unity/MLAgentsLab/Packages/manifest.json` |
 | Inference Engine (`com.unity.ai.inference`) | 2.6.1 | там же |
 | Python | **3.10.11** (не 3.11+: `mlagents-envs` требует `<=3.10.12`) | `py -0p` |
@@ -59,7 +59,7 @@ unity-ml-agents-lab/
 
 ### 1. Unity
 
-Установить через Unity Hub редактор **6000.5.4f1** и открыть проект
+Установить через Unity Hub редактор **6000.5.8f1** и открыть проект
 `unity/MLAgentsLab`. Если проект открыт впервые, выполнить в редакторе
 **Tools → RL → Configure Project** — создаст URP-пайплайн, теги и список сцен.
 
