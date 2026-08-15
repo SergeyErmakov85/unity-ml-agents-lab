@@ -292,6 +292,13 @@ def export_policy_to_onnx(
     :func:`labrl.export.onnx_verify.verify_onnx_model`, и его провал блокирует
     приёмку (требование 10.5).
     """
+    # Экспорт всегда выполняется на CPU. Причины две: трассировка модуля на GPU
+    # требует, чтобы фиктивные входы тоже были на GPU (иначе RuntimeError про
+    # разные устройства), а результат обязан быть одинаковым независимо от того,
+    # была ли на машине видеокарта. Исходное устройство восстанавливается —
+    # обучение после экспорта продолжается там же, где шло.
+    original_device = _module_device(policy)
+    policy.to("cpu")
     wrapper = MLAgentsPolicyWrapper(policy, action_spec, memory_size, strategy).eval()
 
     dummy_obs = tuple(torch.zeros((1, *shape), dtype=torch.float32) for shape in obs_shapes)
@@ -310,14 +317,26 @@ def export_policy_to_onnx(
 
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    with torch.no_grad():
-        torch.onnx.export(
-            wrapper,
-            (*dummy_obs, dummy_masks, dummy_memory),
-            str(out),
-            opset_version=ONNX_OPSET,
-            input_names=input_names,
-            output_names=output_names,
-            dynamic_axes=dynamic_axes,
-        )
+    try:
+        with torch.no_grad():
+            torch.onnx.export(
+                wrapper,
+                (*dummy_obs, dummy_masks, dummy_memory),
+                str(out),
+                opset_version=ONNX_OPSET,
+                input_names=input_names,
+                output_names=output_names,
+                dynamic_axes=dynamic_axes,
+            )
+    finally:
+        policy.to(original_device)
     return out
+
+
+def _module_device(module: nn.Module) -> torch.device:
+    """Устройство модуля. У модуля без параметров — CPU."""
+    for param in module.parameters():
+        return param.device
+    for buffer in module.buffers():
+        return buffer.device
+    return torch.device("cpu")

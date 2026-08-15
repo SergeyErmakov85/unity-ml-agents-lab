@@ -1,0 +1,61 @@
+# DQN в среде E03_RollerBall — ключевой пример проверки пути ONNX → Unity.
+#
+# Структура блоков — Приложение A инструкции проекта.
+
+experiment:
+  env_id: E03_RollerBall
+  algo: dqn
+  seeds: [0, 1, 2]
+  total_steps: 60000        # шагов сбора; шаг = один env.step() по всем аренам
+  notes: "Урок 1.6. Дискретный вариант действий; непрерывный остаётся для PPO/SAC в Фазе 3."
+
+env:
+  mode: build
+  build_path: builds/E03_RollerBall/E03_RollerBall.exe
+  num_areas: 8              # 8 арен в сцене = 8 параллельных сред
+  time_scale: 20.0          # выше ~20 ломается физика PhysX
+  no_graphics: true
+  env_parameters:
+    difficulty: 1.0
+
+network:
+  # Архитектура задаётся пользователем; алгоритм её не знает (требование 8.4).
+  # В ноутбуке эта же сеть определяется прямо в ячейке и полностью редактируема.
+  type: mlp
+  hidden_sizes: [128, 128]
+  activation: relu
+
+algo:
+  gamma: 0.99
+  learning_rate: 0.0005
+  batch_size: 128
+  buffer_size: 200000
+  learning_starts: 2000     # обучение на почти пустом буфере = обучение на коррелированной выборке
+  train_freq: 1
+  gradient_steps: 1
+  target_update_interval: 500   # в обновлениях, не в шагах среды
+  max_grad_norm: 10.0
+  double_dqn: true
+  epsilon:
+    type: linear
+    start: 1.0
+    end: 0.05
+    decay_steps: 30000      # 50% бюджета на спад разведки
+
+eval:
+  every_steps: 10000
+  episodes: 20
+  deterministic: true
+
+success_criteria:
+  # Награда эпизода читается напрямую: положительная — цель достигнута,
+  # около -1 — падение или таймаут. Порог 0.5 означает, что цель достигается
+  # в подавляющем большинстве эпизодов и достаточно быстро
+  # (награда = 1.0 - 0.001 * шагов, то есть 0.5 — это ~500 шагов или меньше).
+  metric: Eval/Mean Reward
+  threshold: 0.5
+  within_steps: 60000
+
+export:
+  onnx_path: unity/MLAgentsLab/Assets/Envs/E03_RollerBall/Models/E03_RollerBall_dqn.onnx
+  verify: true

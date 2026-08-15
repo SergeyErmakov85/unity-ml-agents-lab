@@ -46,9 +46,9 @@ REGISTRY: dict[str, EnvEntry] = {
     entry.env_id: entry
     for entry in [
         EnvEntry("E00_Bandit", "Многорукий бандит", "Основы", "PLANNED"),
-        EnvEntry("E01_GridWorld", "GridWorld 5×5", "Табличные методы", "IN_PROGRESS"),
+        EnvEntry("E01_GridWorld", "GridWorld 5×5", "Табличные методы", "DONE"),
         EnvEntry("E02_CartPoleUnity", "Балансировка шеста", "Табличные методы", "PLANNED"),
-        EnvEntry("E03_RollerBall", "Докатись до цели", "Value-based", "IN_PROGRESS"),
+        EnvEntry("E03_RollerBall", "Докатись до цели", "Value-based", "DONE"),
         EnvEntry("E04_BallBalance", "Удержание шара на платформе", "Непрерывное управление", "PLANNED"),
         EnvEntry("E05_FoodCollector", "Сбор еды", "Policy gradient", "PLANNED"),
         EnvEntry("E06_Hunter3D", "Преследование в 3D", "Actor-Critic", "PLANNED"),

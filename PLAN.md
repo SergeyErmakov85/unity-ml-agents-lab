@@ -3,7 +3,7 @@
 **Дата:** 2026-08-15
 **Ветка:** `feature/lab-bootstrap`
 **Основание:** `CLAUDE_Unity-ml-agents-lab.md`
-**Текущая фаза:** Фаза 1 (каркас платформы) — выполняется. Состояние — раздел 6.
+**Текущая фаза:** Фаза 2 (вертикальный срез) — выполняется. Состояние — раздел 7.
 
 Сопутствующие документы: `docs/00_AUDIT.md`, `docs/01_STACK.md`,
 `docs/02_LESSON_MAP.md`, `docs/04_ONNX_CONTRACT.md`, `docs/ASSUMPTIONS.md`.
@@ -253,3 +253,59 @@ A-21 (пакеты, поднятые редактором), A-22 (удалён `
 2. `labrl/algos` и `labrl/buffers` (A-15), `scripts/train.py`, `scripts/evaluate.py`,
    `scripts/export_onnx.py` (A-16).
 3. `ENV_SPEC.md` для `E03_RollerBall` — его нет вовсе.
+
+
+---
+
+## 7. Состояние Фазы 2 (вертикальный срез)
+
+**Дата обновления:** 2026-08-15.
+
+### Что закрыто
+
+| Пункт | Статус | Подтверждение |
+|---|---|---|
+| `E01_GridWorld` — табличный Q-learning + Value Iteration | ✔ **DONE** | `docs/envs/E01_GridWorld.md` |
+| `E03_RollerBall` — DQN на PyTorch, полный путь ONNX → Unity | ✔ **DONE** | `docs/envs/E03_RollerBall.md` |
+| Грабли зафиксированы | ✔ | `docs/07_TROUBLESHOOTING.md`, T-6…T-8 |
+
+### Обе среды приведены к стандарту 7.2
+
+`SceneValidator` по всему проекту: **0 ошибок, 0 предупреждений**. Сделано:
+арены на базе `TrainingAreaBase` со своим генератором, агенты — наследники
+`AgentBase`, K арен из префаба (4 и 8), корневые группы сцены, строки-контракты
+в `ENV_SPEC.md`.
+
+### Что появилось в ядре
+
+- `labrl/algos/tabular/`: `q_learning`, `value_iteration`
+- `labrl/algos/dqn.py`: DQN с целевой сетью и Double DQN
+- `labrl/buffers/replay.py`: кольцевой буфер воспроизведения
+- `labrl/envs/gridworld_mdp.py`: модель MDP для DP и сверки со средой
+- `labrl/nets/tabular.py`: таблица Q как экспортируемый линейный слой
+- `labrl/train/`: циклы обучения `tabular` и `dqn`
+- `scripts/`: `train.py`, `check_inference.py`, `results.py`
+
+### Инструмент проверки требования 10.6
+
+Проверка инференса в Unity автоматизирована и переиспользуема для любой среды:
+`InferenceProbe` (рантайм) + `InferenceBuild` (редактор) + `scripts/check_inference.py`.
+Скрипт собирает билд с назначенной моделью и `Inference Only`, прогоняет
+20 эпизодов и сравнивает награду с Python-оценкой.
+
+### Гейт Ф2
+
+| Часть гейта | Статус |
+|---|---|
+| агент под управлением ONNX-модели работает в Unity | ✔ подтверждено измерением: `E01` — 20/20 `Goal`, отношение 1.000; `E03` — 20/20 `Goal`, отношение 1.004 |
+| **пользователь лично видит это в Unity и графики в TensorBoard** | ожидает пользователя |
+
+Чтобы закрыть вторую часть:
+
+```powershell
+# графики
+.\scripts	b.ps1
+
+# агент под управлением модели — открыть сцену в редакторе,
+# назначить модель из Assets/Envs/<env>/Models/, Behavior Type = Inference Only
+```

@@ -39,6 +39,7 @@ from labrl.export.onnx_export import (
     ONNX_OPSET,
     MLAgentsPolicyWrapper,
     _HasActionSpec,
+    _module_device,
     contract_input_names,
     contract_output_names,
 )
@@ -207,10 +208,18 @@ def verify_onnx_model(
     # --- 7. Числовой паритет и диапазоны --------------------------------
     if 64 in runs:
         feed64 = _make_feed(obs_shapes, 64, mask_size, memory_size, sample_obs)
-        wrapper = MLAgentsPolicyWrapper(policy, action_spec, memory_size, strategy).eval()
-        torch_inputs = [torch.from_numpy(feed64[name]) for name in _forward_arg_names(len(obs_shapes))]
-        with torch.no_grad():
-            torch_out = wrapper(*torch_inputs)
+        # Сверка идёт на CPU: ровно там же исполняется экспортированный граф
+        # в onnxruntime, и сравнивать надо одно с одним. Исходное устройство
+        # модуля восстанавливается — обучение может продолжаться на GPU.
+        original_device = _module_device(policy)
+        policy.to("cpu")
+        try:
+            wrapper = MLAgentsPolicyWrapper(policy, action_spec, memory_size, strategy).eval()
+            torch_inputs = [torch.from_numpy(feed64[name]) for name in _forward_arg_names(len(obs_shapes))]
+            with torch.no_grad():
+                torch_out = wrapper(*torch_inputs)
+        finally:
+            policy.to(original_device)
         torch_named = dict(zip(contract_output_names(action_spec, memory_size), torch_out))
 
         # Сравниваем по детерминированным выходам: стохастические (`sample()`)

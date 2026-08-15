@@ -1,112 +1,126 @@
-using Unity.MLAgents;
+using LabRL.Core;
 using Unity.MLAgents.Actuators;
 using Unity.MLAgents.Sensors;
 using UnityEngine;
+#if ENABLE_INPUT_SYSTEM
+using UnityEngine.InputSystem;
+#endif
 
 /// <summary>
-/// Агент-шар, который учится докатываться до цели (Target), не падая с платформы.
+/// Агент-шар, который учится докатываться до цели, не падая с платформы (TS-003).
 ///
-/// Наблюдения (Space Size = 8):
-///   - позиция цели (x, y, z)          — 3
-///   - позиция агента (x, y, z)        — 3
-///   - скорость агента (x, z)          — 2
+/// Наблюдения (8): локальные позиции цели и агента по 3 и скорость агента по X, Z.
+/// Позиции **локальные** относительно арены — иначе восемь арен, разнесённых
+/// по X, выглядели бы для сети восемью разными задачами.
 ///
-/// Действия: Continuous 2 — сила по осям X и Z.
-/// (Вариант Discrete 4 — движение в 4 стороны — см. закомментированный код внизу.)
+/// Действия: Discrete 1 ветвь × 4 — направление прикладываемой силы.
+/// Непрерывный вариант (Continuous 2) остаётся для PPO/SAC в Фазе 3; переход
+/// затрагивает только <see cref="OnActionReceived"/> и `ActionSpec` в Setup-скрипте.
 /// </summary>
 [RequireComponent(typeof(Rigidbody))]
-public class RollerAgent : Agent
+public class RollerAgent : AgentBase
 {
     [Header("Ссылки")]
-    [Tooltip("Цель, до которой нужно докатиться")]
-    public Transform target;
+    public RollerArea area;
 
     [Header("Параметры движения")]
+    [Tooltip("Множитель силы, прикладываемой к Rigidbody за шаг.")]
     public float forceMultiplier = 10f;
 
-    [Header("Границы платформы (для респауна цели)")]
-    public float spawnRange = 4f;
+    [Header("Награды")]
+    [Tooltip("Штраф за каждый шаг Academy. Равен 1/MaxStep: эпизод без результата стоит ровно -1.")]
+    public float stepReward = -0.001f;
+    public float goalReward = 1f;
+    public float fallReward = -1f;
 
-    private Rigidbody rBody;
+    [Tooltip("Дистанция, на которой цель считается достигнутой.")]
+    public float reachDistance = 1.42f;
+
+    public override string EnvId => "E03_RollerBall";
+
+    Rigidbody m_Body;
+    int m_HeuristicAction;
+
+    /// <summary>Направления силы по индексу действия. Порядок зафиксирован в TS-003, §5.</summary>
+    static readonly Vector3[] Directions =
+    {
+        Vector3.forward,  // 0: +Z
+        Vector3.back,     // 1: -Z
+        Vector3.left,     // 2: -X
+        Vector3.right,    // 3: +X
+    };
 
     public override void Initialize()
     {
-        rBody = GetComponent<Rigidbody>();
+        base.Initialize();
+        m_Body = GetComponent<Rigidbody>();
+        if (area == null) area = GetComponentInParent<RollerArea>();
     }
 
     public override void OnEpisodeBegin()
     {
-        // Если агент упал с платформы — вернуть его на место и обнулить импульс
-        if (transform.localPosition.y < 0f)
-        {
-            rBody.angularVelocity = Vector3.zero;
-            rBody.linearVelocity = Vector3.zero;
-            transform.localPosition = new Vector3(0f, 0.5f, 0f);
-        }
-
-        // Переместить цель в случайную точку на платформе
-        target.localPosition = new Vector3(
-            Random.Range(-spawnRange, spawnRange),
-            0.5f,
-            Random.Range(-spawnRange, spawnRange));
+        base.OnEpisodeBegin();
+        area.ResetAgent(m_Body);
+        area.PlaceTarget();
     }
 
     public override void CollectObservations(VectorSensor sensor)
     {
-        sensor.AddObservation(target.localPosition);     // 3
-        sensor.AddObservation(transform.localPosition);  // 3
-        sensor.AddObservation(rBody.linearVelocity.x);   // 1
-        sensor.AddObservation(rBody.linearVelocity.z);   // 1
-        // Итого: 8
+        sensor.AddObservation(area.target.localPosition);  // 3
+        sensor.AddObservation(transform.localPosition);    // 3
+        sensor.AddObservation(m_Body.linearVelocity.x);    // 1
+        sensor.AddObservation(m_Body.linearVelocity.z);    // 1
+        // Итого 8 — совпадает со строкой-контрактом ENV_SPEC.md.
     }
 
     public override void OnActionReceived(ActionBuffers actions)
     {
-        // Continuous 2: сила по X и Z
-        Vector3 controlSignal = Vector3.zero;
-        controlSignal.x = actions.ContinuousActions[0];
-        controlSignal.z = actions.ContinuousActions[1];
-        rBody.AddForce(controlSignal * forceMultiplier);
+        int action = actions.DiscreteActions[0];
+        m_Body.AddForce(Directions[action] * forceMultiplier);
 
-        // Достигли цели — награда и новый эпизод
-        float distanceToTarget = Vector3.Distance(transform.localPosition, target.localPosition);
-        if (distanceToTarget < 1.42f)
+        AddReward(stepReward);
+        // Обрыв по MaxStep выполняет ML-Agents раньше следующего OnActionReceived,
+        // поэтому награда и длина эпизода запоминаются на каждом шаге.
+        TrackStep();
+
+        float distance = Vector3.Distance(transform.localPosition, area.target.localPosition);
+        if (distance < reachDistance)
         {
-            SetReward(1.0f);
-            EndEpisode();
+            AddReward(goalReward);
+            EndEpisodeWithResult("Goal", success: true);
         }
-        // Упали с платформы — эпизод окончен без награды
-        else if (transform.localPosition.y < 0f)
+        else if (area.HasFallen())
         {
-            EndEpisode();
+            AddReward(fallReward);
+            EndEpisodeWithResult("Fall", success: false);
         }
     }
 
-    // Ручное управление (Behavior Type = Heuristic Only) — для проверки сцены стрелками/WASD
     public override void Heuristic(in ActionBuffers actionsOut)
     {
-        var continuousActions = actionsOut.ContinuousActions;
-        continuousActions[0] = Input.GetAxis("Horizontal");
-        continuousActions[1] = Input.GetAxis("Vertical");
+        // DiscreteActions — свойство, возвращающее структуру-сегмент, поэтому
+        // индексировать надо локальную копию, а не результат свойства напрямую
+        // (иначе CS1612: изменение возвращаемого значения).
+        var discrete = actionsOut.DiscreteActions;
+        discrete[0] = m_HeuristicAction;
     }
 
-    /*
-    // ===== Вариант с Discrete-действиями (Branch Size = 4: вперёд/назад/влево/вправо) =====
-    // В Behavior Parameters установите Discrete Branches = 1, Branch 0 Size = 4,
-    // и замените OnActionReceived/Heuristic на:
-    //
-    // public override void OnActionReceived(ActionBuffers actions)
-    // {
-    //     Vector3 dir = actions.DiscreteActions[0] switch
-    //     {
-    //         0 => Vector3.forward,
-    //         1 => Vector3.back,
-    //         2 => Vector3.left,
-    //         3 => Vector3.right,
-    //         _ => Vector3.zero
-    //     };
-    //     rBody.AddForce(dir * forceMultiplier);
-    //     ... (проверка цели/падения — та же)
-    // }
-    */
+    void Update()
+    {
+        // Ввод читается в Update, а расходуется в Heuristic: FixedUpdate может
+        // пропустить короткое нажатие, а Update — нет.
+#if ENABLE_INPUT_SYSTEM
+        var kb = Keyboard.current;
+        if (kb == null) return;
+        if (kb.upArrowKey.isPressed || kb.wKey.isPressed) m_HeuristicAction = 0;
+        else if (kb.downArrowKey.isPressed || kb.sKey.isPressed) m_HeuristicAction = 1;
+        else if (kb.leftArrowKey.isPressed || kb.aKey.isPressed) m_HeuristicAction = 2;
+        else if (kb.rightArrowKey.isPressed || kb.dKey.isPressed) m_HeuristicAction = 3;
+#else
+        if (Input.GetKey(KeyCode.UpArrow) || Input.GetKey(KeyCode.W)) m_HeuristicAction = 0;
+        else if (Input.GetKey(KeyCode.DownArrow) || Input.GetKey(KeyCode.S)) m_HeuristicAction = 1;
+        else if (Input.GetKey(KeyCode.LeftArrow) || Input.GetKey(KeyCode.A)) m_HeuristicAction = 2;
+        else if (Input.GetKey(KeyCode.RightArrow) || Input.GetKey(KeyCode.D)) m_HeuristicAction = 3;
+#endif
+    }
 }

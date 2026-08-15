@@ -24,6 +24,7 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "python"))
 
+from labrl.algos.dqn import DQN, DQNConfig  # noqa: E402
 from labrl.algos.tabular.q_learning import QLearning, QLearningConfig  # noqa: E402
 from labrl.envs.unity_env import open_unity_env  # noqa: E402
 from labrl.envs.vec_unity_env import VecUnityEnv  # noqa: E402
@@ -31,11 +32,13 @@ from labrl.export.onnx_export import ActionSpecLite, export_policy_to_onnx  # no
 from labrl.export.onnx_verify import verify_onnx_model  # noqa: E402
 from labrl.logging.run_dir import create_run_dir  # noqa: E402
 from labrl.logging.tb_logger import TBLogger, git_commit_hash  # noqa: E402
+from labrl.nets.mlp import MLPQNetwork  # noqa: E402
+from labrl.train.dqn import DQNTrainConfig, train_dqn  # noqa: E402
 from labrl.train.tabular import TabularTrainConfig, train_q_learning  # noqa: E402
 from labrl.utils.checkpoint import save_checkpoint  # noqa: E402
 from labrl.utils.config import ExperimentConfig, dump_config, load_config, resolve_path  # noqa: E402
 from labrl.utils.schedules import build_schedule  # noqa: E402
-from labrl.utils.seeding import set_global_seed  # noqa: E402
+from labrl.utils.seeding import resolve_device, set_global_seed  # noqa: E402
 
 #: Во сколько раз сокращается бюджет шагов в режиме --quick.
 QUICK_STEP_DIVISOR = 10
@@ -43,8 +46,13 @@ QUICK_STEP_DIVISOR = 10
 QUICK_MIN_STEPS = 2_000
 
 
-def build_algo(cfg: ExperimentConfig):
-    """Создаёт алгоритм по конфигу. Пока поддержан один — табличный Q-learning."""
+def build_algo(cfg: ExperimentConfig, obs_dim: int, num_actions: int):
+    """Создаёт алгоритм по конфигу.
+
+    Сеть собирается здесь же, из блока `network`. В ноутбуке этот шаг делает
+    сам пользователь — алгоритм принимает любой nn.Module, удовлетворяющий
+    протоколу (требование 8.4), и об архитектуре ничего не знает.
+    """
     if cfg.algo_name == "qlearning":
         return QLearning(
             num_states=int(cfg.network["num_states"]),
@@ -55,6 +63,26 @@ def build_algo(cfg: ExperimentConfig):
                 initial_q=float(cfg.algo.get("initial_q", 0.0)),
             ),
         )
+
+    if cfg.algo_name == "dqn":
+        hidden = tuple(cfg.network.get("hidden_sizes", (128, 128)))
+        activation = cfg.network.get("activation", "relu")
+        device = resolve_device("auto")
+        q_net = MLPQNetwork(obs_dim, num_actions, hidden, activation)
+        target_net = MLPQNetwork(obs_dim, num_actions, hidden, activation)
+        return DQN(
+            q_net, target_net,
+            DQNConfig(
+                gamma=float(cfg.algo["gamma"]),
+                learning_rate=float(cfg.algo["learning_rate"]),
+                batch_size=int(cfg.algo["batch_size"]),
+                target_update_interval=int(cfg.algo["target_update_interval"]),
+                max_grad_norm=float(cfg.algo.get("max_grad_norm", 10.0)),
+                double_dqn=bool(cfg.algo.get("double_dqn", True)),
+            ),
+            device=device,
+        )
+
     raise ValueError(
         f"алгоритм {cfg.algo_name!r} пока не поддержан скриптом; "
         "добавьте ветку в build_algo и цикл в labrl.train"
@@ -90,26 +118,39 @@ def run_seed(cfg: ExperimentConfig, seed: int, quick: bool) -> dict:
         run.write_env_info({**handle.env_info(), "num_envs": vec.num_envs, "seed": seed,
                             "total_steps": total_steps, "quick": quick})
 
-        algo = build_algo(cfg)
+        num_actions = int(vec.action_spec.discrete_branches[0])
+        algo = build_algo(cfg, vec.single_obs_dim, num_actions)
         logger = TBLogger(run.tb)
-        train_cfg = TabularTrainConfig(
-            total_steps=total_steps,
-            eval_every_steps=int(cfg.eval["every_steps"]),
-            eval_episodes=int(cfg.eval["episodes"]),
-        )
 
-        result = train_q_learning(
-            vec=vec,
-            algo=algo,
-            epsilon_schedule=build_schedule(cfg.algo["epsilon"]),
-            logger=logger,
-            cfg=train_cfg,
-            seed=seed,
-            on_eval=lambda step, reward, success: print(
-                f"  шаг {step:>7}: Eval/Mean Reward {reward:+.4f}  Eval/Success Rate {success:.0%}",
-                flush=True,
-            ),
-        )
+        def report(step: int, reward: float, success: float) -> None:
+            print(f"  шаг {step:>7}: Eval/Mean Reward {reward:+.4f}  Eval/Success Rate {success:.0%}",
+                  flush=True)
+
+        eval_every = int(cfg.eval["every_steps"])
+        eval_episodes = int(cfg.eval["episodes"])
+        schedule = build_schedule(cfg.algo["epsilon"])
+
+        if cfg.algo_name == "qlearning":
+            result = train_q_learning(
+                vec=vec, algo=algo, epsilon_schedule=schedule, logger=logger,
+                cfg=TabularTrainConfig(total_steps=total_steps, eval_every_steps=eval_every,
+                                       eval_episodes=eval_episodes),
+                seed=seed, on_eval=report,
+            )
+        else:
+            result = train_dqn(
+                vec=vec, algo=algo, epsilon_schedule=schedule, logger=logger,
+                cfg=DQNTrainConfig(
+                    total_steps=total_steps,
+                    buffer_size=int(cfg.algo["buffer_size"]),
+                    learning_starts=int(cfg.algo["learning_starts"]),
+                    train_freq=int(cfg.algo.get("train_freq", 1)),
+                    gradient_steps=int(cfg.algo.get("gradient_steps", 1)),
+                    eval_every_steps=eval_every,
+                    eval_episodes=eval_episodes,
+                ),
+                seed=seed, on_eval=report,
+            )
 
         logger.hparams(
             {
