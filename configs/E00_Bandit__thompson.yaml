@@ -1,0 +1,58 @@
+# ε-greedy в среде E00_Bandit — базовая стратегия разведки (урок 1.7).
+#
+# Три стратегии урока живут в трёх конфигах с одинаковыми бюджетом и оценкой:
+# только так их кривые в TensorBoard сравнимы напрямую.
+# Структура блоков — Приложение A инструкции проекта.
+
+experiment:
+  env_id: E00_Bandit
+  algo: thompson
+  seeds: [0, 1, 2]
+  total_steps: 4000         # шагов сбора; шаг = один env.step() по всем аренам = 8 нажатий
+  notes: "Урок 1.7. Байесовская разведка: рука выбирается розыгрышем Beta-апостериорного."
+
+env:
+  mode: build
+  build_path: builds/E00_Bandit/E00_Bandit.exe
+  num_areas: 8              # 8 арен в сцене = 8 параллельных бандитов
+  time_scale: 20.0
+  no_graphics: true
+  env_parameters:
+    difficulty: 1.0
+
+network:
+  # Нейросети у бандита нет: состояние одно, ценность руки — скаляр.
+  # Блок обязателен структурой конфига и описывает таблицу оценок.
+  type: table
+  num_states: 1
+  num_actions: 5
+
+algo:
+  strategy: thompson
+  initial_value: 0.0        # оптимистичная инициализация выключена: разведка — дело стратегии
+  ucb_c: 1.414              # не используется этой стратегией, оставлено для сравнимости конфигов
+  prior_alpha: 1.0          # Beta(1, 1) — равномерное: «о руке ничего не известно»
+  prior_beta: 1.0
+  # ε стратегией не используется, но блок обязателен: тег Policy/Epsilon
+  # пишется всегда, иначе состав тегов зависел бы от метода.
+  epsilon:
+    type: constant
+    value: 0.0
+
+eval:
+  every_steps: 500
+  episodes: 200             # награда бернуллиевская: 200 нажатий дают ст. ошибку ~0.03
+  deterministic: true
+  success_threshold: 0.0    # успех = нажатие принесло награду
+
+success_criteria:
+  # Eval/Mean Reward жадной политики численно равен вероятности выбранной ею
+  # руки. Лучшая рука даёт 0.80, вторая — 0.65. Порог 0.70 отделяет одно
+  # от другого с запасом на шум выборки из 200 нажатий.
+  metric: Eval/Mean Reward
+  threshold: 0.70
+  within_steps: 4000
+
+export:
+  onnx_path: unity/MLAgentsLab/Assets/Envs/E00_Bandit/Models/E00_Bandit_thompson.onnx
+  verify: true
