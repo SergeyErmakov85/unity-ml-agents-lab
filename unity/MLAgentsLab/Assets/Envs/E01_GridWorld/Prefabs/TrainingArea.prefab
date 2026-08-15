@@ -498,6 +498,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 4ede72f2e7e9e4145b65787ad7649cb1, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GridWorldEnvironment
+  areaIndex: 0
+  fallbackSeed: 0
+  defaultDifficulty: 1
   cols: 5
   rows: 5
   cellSize: 1

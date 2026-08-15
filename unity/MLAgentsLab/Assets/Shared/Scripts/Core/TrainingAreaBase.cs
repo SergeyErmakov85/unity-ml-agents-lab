@@ -46,8 +46,24 @@ namespace LabRL.Core
         /// <summary>Текущая сложность среды, полученная из Python.</summary>
         public float Difficulty { get; private set; }
 
-        /// <summary>Детерминированный генератор арены. Единственный источник случайности среды.</summary>
-        protected System.Random Rng { get; private set; }
+        System.Random m_Rng;
+
+        /// <summary>
+        /// Детерминированный генератор арены. Единственный источник случайности среды.
+        ///
+        /// Инициализируется лениво: Unity не гарантирует порядок <c>Awake</c> между
+        /// ареной и агентом, а <c>Agent.OnEpisodeBegin()</c> может запросить
+        /// случайную клетку раньше, чем у арены выполнится <c>Awake</c>. Ленивый
+        /// доступ снимает эту гонку, не завися от порядка выполнения.
+        /// </summary>
+        protected System.Random Rng
+        {
+            get
+            {
+                if (m_Rng == null) InitializeArea();
+                return m_Rng;
+            }
+        }
 
         protected virtual void Awake()
         {
@@ -66,7 +82,7 @@ namespace LabRL.Core
             Difficulty = parameters.GetWithDefault(DifficultyParameter, defaultDifficulty);
 
             AreaSeed = unchecked(baseSeed * 7919 + areaIndex);
-            Rng = new System.Random(AreaSeed);
+            m_Rng = new System.Random(AreaSeed);
 
             OnAreaInitialized();
         }

@@ -112,7 +112,14 @@ venv/
 .pytest_cache/
 .ipynb_checkpoints/
 *.onnx.tmp
-*.onnx.meta
+
+# .meta обученных моделей коммитятся ВМЕСТЕ с .onnx. Без .meta Unity создаст
+# новый GUID при каждом клоне, и ссылка на модель в BehaviorParameters сломается.
+# Модель — часть примера (определение 1.2), а не артефакт сборки.
+
+# Временная сцена проверки инференса: создаётся и удаляется InferenceBuild.
+unity/MLAgentsLab/[Aa]ssets/Shared/Temp/
+unity/MLAgentsLab/[Aa]ssets/Shared/Temp.meta
 
 # Прогоны обучения: каталог игнорируется целиком, кроме описания схемы
 /results/*

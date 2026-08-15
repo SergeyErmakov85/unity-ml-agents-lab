@@ -20,6 +20,18 @@ public static class GridWorldSetup
     /// <summary>Идентификатор среды. Behavior Name в Unity обязан совпадать с ним (правило 5.3).</summary>
     private const string EnvId = "E01_GridWorld";
 
+    /// <summary>
+    /// Сколько тренировочных арен размещается в сцене. Python трактует их как
+    /// столько же параллельных сред (требование 8.2).
+    /// </summary>
+    private const int AreaCount = 4;
+
+    /// <summary>
+    /// Шаг размещения арен по X. Арена занимает 5 единиц, шаг 8 оставляет зазор 3:
+    /// объекты соседних арен не пересекаются ни визуально, ни геометрически.
+    /// </summary>
+    private const float AreaSpacing = 8f;
+
     private const string Root = "Assets/Envs/E01_GridWorld";
     private const string ScenePath = Root + "/Scenes/E01_GridWorld.unity";
 
@@ -119,15 +131,45 @@ public static class GridWorldSetup
         requester.TakeActionsBetweenDecisions = false;
 
         // ---------- Префаб TrainingArea ----------
-        PrefabUtility.SaveAsPrefabAssetAndConnect(
-            area, Root + "/Prefabs/TrainingArea.prefab", InteractionMode.AutomatedAction);
+        // Арена сохраняется как префаб и удаляется из сцены: в сцену попадают
+        // только его инстансы. Иначе «нулевая» арена жила бы отдельной жизнью
+        // и расходилась с остальными при правке префаба.
+        var areaPrefab = PrefabUtility.SaveAsPrefabAsset(area, Root + "/Prefabs/TrainingArea.prefab");
+        Object.DestroyImmediate(area);
+
+        // ---------- Корневые группы (требование 7.2) ----------
+        var rootTrainingAreas = new GameObject("TrainingAreas");
+        var rootCameras = new GameObject("Cameras");
+        var rootLighting = new GameObject("Lighting");
+        var rootUI = new GameObject("UI");
+        // Managers и Debug пока пусты, но требуются структурой сцены (7.2):
+        // в них лягут менеджеры curriculum и отладочный HUD последующих фаз.
+        new GameObject("Managers");
+        new GameObject("Debug");
+
+        // ---------- K арен ----------
+        GridWorldAgent firstAgent = null;
+        for (int i = 0; i < AreaCount; i++)
+        {
+            var instance = (GameObject)PrefabUtility.InstantiatePrefab(areaPrefab, rootTrainingAreas.transform);
+            instance.name = $"TrainingArea_{i:00}";
+            instance.transform.localPosition = new Vector3(i * AreaSpacing, 0f, 0f);
+
+            var instanceEnv = instance.GetComponent<GridWorldEnvironment>();
+            instanceEnv.areaIndex = i;   // смещение сида: арены не идут синхронно
+
+            if (i == 0) firstAgent = instance.GetComponentInChildren<GridWorldAgent>();
+        }
 
         // ---------- UI ----------
-        BuildUI(agent);
+        // Панель показывает состояние арены 0: выводить K панелей бессмысленно,
+        // а обучение всё равно идёт по всем аренам сразу.
+        BuildUI(firstAgent).transform.SetParent(rootUI.transform, true);
 
         // ---------- Камера ----------
         var cam = Camera.main;
         cam.gameObject.name = "MainCamera";
+        cam.transform.SetParent(rootCameras.transform, true);
         cam.orthographic = true;
         cam.orthographicSize = 3f;
         cam.transform.position = new Vector3(0f, 10f, 0f);
@@ -138,6 +180,7 @@ public static class GridWorldSetup
         // ---------- Освещение ----------
         var lightGo = GameObject.Find("Directional Light");
         lightGo.name = "DirectionalLight";
+        lightGo.transform.SetParent(rootLighting.transform, true);
         var light = lightGo.GetComponent<Light>();
         light.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
         light.intensity = 1f;
@@ -153,7 +196,7 @@ public static class GridWorldSetup
         EditorSceneManager.SaveScene(scene, ScenePath);
         EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(ScenePath, true) };
         AssetDatabase.SaveAssets();
-        Debug.Log($"GridWorld-сцена собрана и сохранена: {ScenePath}");
+        Debug.Log($"GridWorld-сцена собрана: {ScenePath}, арен: {AreaCount}, шаг {AreaSpacing}");
     }
 
     // ---------------------------------------------------------------- Префабы
@@ -202,7 +245,7 @@ public static class GridWorldSetup
 
     // ---------------------------------------------------------------- UI
 
-    private static void BuildUI(GridWorldAgent agent)
+    private static GameObject BuildUI(GridWorldAgent agent)
     {
         var canvasGo = new GameObject("UICanvas");
         var canvas = canvasGo.AddComponent<Canvas>();
@@ -233,6 +276,7 @@ public static class GridWorldSetup
         ui.textLastAction = MakeText(panelRect, "Text_LastAction", 3, "Action: -");
         ui.textReward = MakeText(panelRect, "Text_Reward", 4, "Reward: 0.00");
         ui.textResult = MakeText(panelRect, "Text_Result", 5, "Result: Running");
+        return canvasGo;
     }
 
     private static TextMeshProUGUI MakeText(RectTransform parent, string name, int row, string initial)

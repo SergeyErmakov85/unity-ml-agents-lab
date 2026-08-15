@@ -1,15 +1,37 @@
 # TS-001. GridWorld — среда для Q-learning
 
+<!-- validator: obs_size=25; discrete_branches=4; continuous_size=0; max_step=100 -->
+
+Строка выше — машиночитаемый контракт для `SceneValidator` (формат:
+`docs/03_CONVENTIONS.md`, §3). Значения в ней обязаны совпадать с разделами
+7.2–7.3 этого документа и с фактической сценой; расхождение — ошибка сборки.
+
 ## 0. Метаданные
 
 | Параметр | Значение |
 |---|---|
-| Unity | 2023.2+ (проверочная версия 2023.2 LTS) |
-| ML-Agents | Release 22 — пакет `com.unity.ml-agents` 3.0.0; Python `mlagents` 1.1.0 |
-| Render Pipeline | URP |
-| Версия TS | 1.0 |
-| Дата | 2026-07-19 |
+| Идентификатор среды | `E01_GridWorld` (он же **Behavior Name**, правило 5.3) |
+| Unity | 6000.5.8f1 |
+| ML-Agents | `com.unity.ml-agents` 4.0.3; Python `mlagents` 1.2.0.dev0 (`release_23_tag`) |
+| Render Pipeline | URP 17.5.0 |
+| Версия TS | 1.1 |
+| Дата | 2026-08-15 (ред. 1.1: приведение к стандарту 7.2) |
 | Целевой исполнитель | Claude Code |
+
+### Изменения в редакции 1.1
+
+Среда приведена к стандарту раздела 7 инструкции проекта:
+
+* `GridWorldEnvironment` наследует `LabRL.Core.TrainingAreaBase` — сид и
+  сложность приходят из Python через `EnvironmentParametersChannel`, у каждой
+  арены **свой** генератор случайных чисел;
+* `GridWorldAgent` наследует `LabRL.Core.AgentBase` — сверка Behavior Name
+  с идентификатором среды и публикация метрик в неймспейс `Env/`;
+* в сцене **4 арены** из одного префаба с шагом 8 по X: Python трактует их как
+  4 параллельные среды (требование 8.2);
+* корневые группы сцены: `TrainingAreas`, `Cameras`, `Lighting`, `Managers`,
+  `UI`, `Debug`;
+* Behavior Name изменён с `GridWorldQLearning` на `E01_GridWorld`.
 
 ---
 

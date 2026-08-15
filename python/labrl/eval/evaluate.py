@@ -82,6 +82,9 @@ def evaluate(
     is_success = success_predicate or (lambda total: total > 0.0)
     budget = max_steps if max_steps is not None else 200 * episodes
 
+    # reset() здесь безопасен: если среда уже сброшена, обёртка пропустит
+    # вызов, а лишний env.reset() стоил бы одного шага с нулевым действием
+    # (см. VecUnityEnv.reset и T-7 в docs/07_TROUBLESHOOTING.md).
     obs = vec.reset()
     n = vec.num_envs
 

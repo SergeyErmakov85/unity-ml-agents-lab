@@ -1,13 +1,21 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
+using LabRL.Core;
 using UnityEngine;
 
 /// <summary>
 /// Дискретная сетка 5×5 для Q-learning (TS-001).
 /// Вся логика индексная: клетка (c, r) → state = r·cols + c.
 /// Координаты клеток локальны относительно контейнера TrainingArea,
-/// поэтому префаб можно инстанцировать со смещением для параллельного обучения.
+/// поэтому префаб инстанцируется со смещением для параллельного обучения.
+///
+/// Наследует <see cref="TrainingAreaBase"/>: отсюда берутся сид и сложность,
+/// приходящие из Python через EnvironmentParametersChannel (требование 7.3),
+/// и генератор случайных чисел, **свой у каждой арены**. Глобальный
+/// UnityEngine.Random здесь использовать нельзя: при K аренах порядок обращений
+/// к нему зависит от порядка вызова OnEpisodeBegin, и прогон перестаёт быть
+/// воспроизводимым при фиксированном сиде.
 /// </summary>
-public class GridWorldEnvironment : MonoBehaviour
+public class GridWorldEnvironment : TrainingAreaBase
 {
     [Header("Grid")]
     public int cols = 5;
@@ -74,31 +82,50 @@ public class GridWorldEnvironment : MonoBehaviour
     /// </summary>
     public Vector2Int ResolveMove(Vector2Int cell, int action)
     {
-        if (slipProbability > 0f && Random.value < slipProbability)
+        if (slipProbability > 0f && NextFloat() < slipProbability)
         {
             bool vertical = action <= 1;
             action = vertical
-                ? (Random.value < 0.5f ? 2 : 3)
-                : (Random.value < 0.5f ? 0 : 1);
+                ? (NextFloat() < 0.5f ? 2 : 3)
+                : (NextFloat() < 0.5f ? 0 : 1);
         }
 
         Vector2Int next = cell + Directions[action];
         return (!InBounds(next) || IsWall(next)) ? cell : next;
     }
 
-    /// <summary>Равномерный выбор клетки, не являющейся стеной, целью или ловушкой.</summary>
+    /// <summary>
+    /// Равномерный выбор клетки, не являющейся стеной, целью или ловушкой.
+    ///
+    /// Список свободных клеток строится один раз и переиспользуется: метод
+    /// вызывается в начале каждого эпизода, то есть находится в горячем пути,
+    /// а аллокации там запрещены (требование 7.5).
+    /// </summary>
     public Vector2Int RandomFreeCell()
     {
-        var free = new List<Vector2Int>();
+        if (m_FreeCells == null) RebuildFreeCells();
+        return m_FreeCells[NextInt(0, m_FreeCells.Count)];
+    }
+
+    /// <summary>Пересобирает кэш свободных клеток. Вызывать при изменении карты.</summary>
+    public void RebuildFreeCells()
+    {
+        m_FreeCells = new List<Vector2Int>(cols * rows);
         for (int r = 0; r < rows; r++)
         {
             for (int c = 0; c < cols; c++)
             {
                 var cell = new Vector2Int(c, r);
                 if (!IsWall(cell) && !IsTrap(cell) && !IsGoal(cell))
-                    free.Add(cell);
+                    m_FreeCells.Add(cell);
             }
         }
-        return free[Random.Range(0, free.Count)];
     }
+
+    protected override void OnAreaInitialized()
+    {
+        RebuildFreeCells();
+    }
+
+    List<Vector2Int> m_FreeCells;
 }

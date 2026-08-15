@@ -1,4 +1,4 @@
-using Unity.MLAgents;
+﻿using LabRL.Core;
 using Unity.MLAgents.Actuators;
 using Unity.MLAgents.Sensors;
 using UnityEngine;
@@ -9,11 +9,18 @@ using UnityEngine.InputSystem;
 /// <summary>
 /// Агент GridWorld (TS-001): дискретное состояние 0–24 (one-hot 25),
 /// четыре действия (N/S/E/W), перемещение телепортом между центрами клеток.
-/// Свойство CurrentStateIndex открыто для внешнего табличного Q-learning.
+///
+/// Наследует <see cref="AgentBase"/>: оттуда — проверка совпадения Behavior Name
+/// с идентификатором среды и публикация метрик эпизода в неймспейс Env/.
+///
+/// Свойство <see cref="CurrentStateIndex"/> открыто для внешнего табличного
+/// Q-learning: он работает с индексом состояния, а не с one-hot вектором.
 /// </summary>
-public class GridWorldAgent : Agent
+public class GridWorldAgent : AgentBase
 {
     public GridWorldEnvironment env;
+
+    public override string EnvId => "E01_GridWorld";
 
     private Vector2Int currentCell;
 
@@ -24,14 +31,13 @@ public class GridWorldAgent : Agent
 
     public int CurrentStateIndex => env.StateIndex(currentCell);
     public string LastActionLabel { get; private set; } = "-";
-    public string EpisodeResult { get; private set; } = "Running";
 
     public override void OnEpisodeBegin()
     {
+        base.OnEpisodeBegin();
         currentCell = env.randomStart ? env.RandomFreeCell() : env.startCell;
         transform.position = env.CellToWorld(currentCell, 0.3f);
         LastActionLabel = "-";
-        EpisodeResult = "Running";
     }
 
     public override void CollectObservations(VectorSensor sensor)
@@ -57,22 +63,20 @@ public class GridWorldAgent : Agent
         transform.position = env.CellToWorld(currentCell, 0.3f);
 
         AddReward(env.stepReward);
+        // Обрыв по MaxStep выполняет сам ML-Agents, раньше следующего вызова
+        // OnActionReceived. Чтобы такой эпизод не потерялся в статистике,
+        // база запоминает награду и шаги на каждом шаге (см. AgentBase.TrackStep).
+        TrackStep();
 
         if (env.IsGoal(currentCell))
         {
             AddReward(env.goalReward);
-            EpisodeResult = "Goal";
-            EndEpisode();
+            EndEpisodeWithResult("Goal", success: true);
         }
         else if (env.IsTrap(currentCell))
         {
             AddReward(env.trapReward);
-            EpisodeResult = "Trap";
-            EndEpisode();
-        }
-        else if (MaxStep > 0 && StepCount >= MaxStep)
-        {
-            EpisodeResult = "Timeout"; // сам эпизод завершит ML-Agents по MaxStep
+            EndEpisodeWithResult("Trap", success: false);
         }
     }
 

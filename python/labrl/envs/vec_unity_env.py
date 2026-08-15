@@ -154,8 +154,16 @@ class VecUnityEnv:
 
         Слоты назначаются по возрастанию ``agent_id``, чтобы при одинаковом
         сиде номер слота указывал на ту же арену от запуска к запуску.
+
+        Сброс **пропускается**, если после предыдущего сброса не было ни одного
+        шага. Это не микрооптимизация: повторный ``env.reset()`` в ML-Agents
+        стоит одного шага с нулевым действием, то есть возвращает наблюдение
+        уже не начального состояния (измерено, см. T-7 в troubleshooting).
+        Пропуск заведомо безопасен — сбрасывать нечего.
         """
-        self.handle.env.reset()
+        if self.handle.stepped_since_reset:
+            self.handle.env.reset()
+            self.handle.stepped_since_reset = False
         decision, _ = self.handle.env.get_steps(self.behavior_name)
 
         if self._num_envs is None:
@@ -192,6 +200,7 @@ class VecUnityEnv:
         """
         self._set_actions(actions)
         self.handle.env.step()
+        self.handle.stepped_since_reset = True
         decision, terminal = self.handle.env.get_steps(self.behavior_name)
         return self._collect(decision, terminal)
 

@@ -1,0 +1,57 @@
+# Табличный Q-learning в среде E01_GridWorld.
+#
+# Структура блоков — Приложение A инструкции проекта.
+# Читается `labrl.utils.config.load_config`.
+
+experiment:
+  env_id: E01_GridWorld
+  algo: qlearning
+  seeds: [0, 1, 2]          # требование 12.2: минимум 3 сида
+  total_steps: 20000        # шагов сбора; шаг = один env.step() по всем аренам
+  notes: "Уроки 1.3–1.4 курса cyber-unity-learn. Эталон для сравнения — Value Iteration на той же модели MDP."
+
+env:
+  mode: build               # build | editor
+  build_path: builds/E01_GridWorld/E01_GridWorld.exe
+  num_areas: 4              # столько арен в сцене; Python видит их как 4 параллельные среды
+  time_scale: 20.0
+  no_graphics: true
+  env_parameters:
+    difficulty: 1.0
+
+network:
+  # У табличного метода нет обучаемой сети: политика — матрица Q (25 x 4).
+  # Сеть появляется только на экспорте: таблица оборачивается линейным слоем
+  # без смещения, который при one-hot наблюдении даёт ровно строку Q[s]
+  # (labrl.nets.tabular.OneHotQTable). Экспортируется та же политика, а не её приближение.
+  type: table
+  num_states: 25
+  num_actions: 4
+
+algo:
+  gamma: 0.99               # горизонт дисконтирования
+  learning_rate: 0.2        # α табличного обновления
+  initial_q: 0.0            # нейтральная инициализация Q
+  epsilon:
+    type: linear
+    start: 1.0
+    end: 0.05
+    decay_steps: 12000      # 60% бюджета на спад разведки
+
+eval:
+  every_steps: 2000
+  episodes: 20
+  deterministic: true       # оценивается жадная политика — та же, что уйдёт в ONNX
+
+success_criteria:
+  # Оптимум среды посчитан точно (Value Iteration): кратчайший путь из (0,0)
+  # в (4,4) — 8 шагов, сумма наград 1.0 - 8*0.04 = 0.68. Среда детерминирована,
+  # старт фиксирован, поэтому оптимальная политика даёт ровно 0.68 в каждом
+  # эпизоде. Порог 0.67 — тот же результат с запасом на округление float.
+  metric: Eval/Mean Reward
+  threshold: 0.67
+  within_steps: 20000
+
+export:
+  onnx_path: unity/MLAgentsLab/Assets/Envs/E01_GridWorld/Models/E01_GridWorld_qlearning.onnx
+  verify: true

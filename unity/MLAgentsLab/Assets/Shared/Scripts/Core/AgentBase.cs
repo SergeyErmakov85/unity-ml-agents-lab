@@ -1,4 +1,4 @@
-using Unity.MLAgents;
+﻿using Unity.MLAgents;
 using Unity.MLAgents.Policies;
 using UnityEngine;
 
@@ -21,6 +21,21 @@ namespace LabRL.Core
     /// </summary>
     public abstract class AgentBase : Agent
     {
+        /// <summary>
+        /// Событие завершения эпизода: агент, суммарная награда, метка исхода.
+        ///
+        /// Нужно для проверки инференса в Unity (требование 10.6): внешний
+        /// наблюдатель должен получать награду **завершённого** эпизода, а
+        /// <c>GetCumulativeReward()</c> обнуляется в момент начала следующего,
+        /// и опросом его надёжно не поймать.
+        ///
+        /// Событие статическое: наблюдатель один на сцену, а агентов — по числу
+        /// арен, и подписываться на каждого пришлось бы через поиск объектов.
+        /// Обработчики обязаны отписываться в <c>OnDisable</c>, иначе при
+        /// перезагрузке домена в редакторе накопятся мёртвые подписки.
+        /// </summary>
+        public static event System.Action<AgentBase, float, string> EpisodeFinished;
+
         /// <summary>Идентификатор среды, например <c>E03_RollerBall</c>. Он же Behavior Name.</summary>
         public abstract string EnvId { get; }
 
@@ -28,10 +43,16 @@ namespace LabRL.Core
         public TrainingAreaBase Area { get; private set; }
 
         /// <summary>Чем закончился последний завершённый эпизод — для отладочного HUD.</summary>
-        public string LastEpisodeResult { get; protected set; } = "Running";
+        public string LastEpisodeResult { get; protected set; } = RunningResult;
+
+        /// <summary>Метка незавершённого эпизода. Ею же различается обрыв по времени.</summary>
+        public const string RunningResult = "Running";
 
         BehaviorParameters m_Behavior;
         int m_EpisodeStartStep;
+        int m_StepsAtEpisodeEnd;
+        float m_RewardAtEpisodeEnd;
+        bool m_EpisodeStarted;
 
         public override void Initialize()
         {
@@ -72,17 +93,53 @@ namespace LabRL.Core
             LastEpisodeResult = result;
             MetricsRecorder.Success(success);
             MetricsRecorder.Histogram("EpisodeSteps", StepCount - m_EpisodeStartStep);
+            // Событие поднимается до EndEpisode(): после него награда эпизода
+            // уже обнулена и вернуть её нельзя.
+            EpisodeFinished?.Invoke(this, GetCumulativeReward(), result);
             EndEpisode();
         }
 
         /// <summary>
         /// Наследник обязан вызвать <c>base.OnEpisodeBegin()</c>, если переопределяет метод:
-        /// здесь фиксируется точка отсчёта длины эпизода.
+        /// здесь фиксируется точка отсчёта длины эпизода и закрывается предыдущий
+        /// эпизод, если тот оборвался по <c>MaxStep</c>.
+        ///
+        /// Почему обрыв по времени обрабатывается **здесь**, а не в
+        /// <c>OnActionReceived</c>. ML-Agents завершает эпизод по <c>MaxStep</c>
+        /// в фазе <c>AgentPreStep</c>, то есть **раньше**, чем вызывается
+        /// <c>OnActionReceived</c> этого шага. Проверка вида
+        /// <c>if (StepCount >= MaxStep)</c> внутри <c>OnActionReceived</c> —
+        /// мёртвый код: она не срабатывает никогда, и обрывы по времени тихо
+        /// исчезают из статистики, завышая долю успехов. Единственная точка,
+        /// где факт обрыва ещё виден, — начало следующего эпизода: у предыдущего
+        /// так и остался результат <c>Running</c>.
         /// </summary>
         public override void OnEpisodeBegin()
         {
+            if (m_EpisodeStarted && LastEpisodeResult == RunningResult)
+            {
+                LastEpisodeResult = "Timeout";
+                MetricsRecorder.Success(false);
+                MetricsRecorder.Histogram("EpisodeSteps", m_StepsAtEpisodeEnd - m_EpisodeStartStep);
+                EpisodeFinished?.Invoke(this, m_RewardAtEpisodeEnd, "Timeout");
+            }
+
+            m_EpisodeStarted = true;
             m_EpisodeStartStep = StepCount;
-            LastEpisodeResult = "Running";
+            LastEpisodeResult = RunningResult;
+        }
+
+        /// <summary>
+        /// Запоминает награду и число шагов на случай, если эпизод оборвётся
+        /// по <c>MaxStep</c>: к моменту следующего <c>OnEpisodeBegin</c>
+        /// <c>GetCumulativeReward()</c> и <c>StepCount</c> уже обнулены.
+        /// Вызывается в конце <c>OnActionReceived</c> наследника через
+        /// <see cref="TrackStep"/>.
+        /// </summary>
+        protected void TrackStep()
+        {
+            m_RewardAtEpisodeEnd = GetCumulativeReward();
+            m_StepsAtEpisodeEnd = StepCount;
         }
     }
 }

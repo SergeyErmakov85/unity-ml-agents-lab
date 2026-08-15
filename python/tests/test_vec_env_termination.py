@@ -188,3 +188,38 @@ def test_more_agents_than_slots_is_an_error():
     vec.reset()
     with pytest.raises(RuntimeError, match="свободных слотов нет"):
         vec.step(noop_actions(1))
+
+
+def test_reset_is_skipped_when_nothing_was_stepped():
+    """Повторный env.reset() в ML-Agents стоит шага с нулевым действием.
+
+    Измерено на реальном билде: после второго подряд `reset()` агент
+    GridWorld оказывается не в стартовой клетке (0,0), а в (0,1) —
+    ровно один шаг действием 0. Поэтому обёртка не сбрасывает уже
+    сброшенную среду (T-7 в docs/07_TROUBLESHOOTING.md).
+    """
+    vec = make_vec([
+        ScriptedStep(decisions={10: 0.1}),
+        ScriptedStep(decisions={10: 0.2}),
+    ])
+    vec.handle.stepped_since_reset = False
+
+    vec.reset()
+    assert vec.handle.env.resets == 0, "сброс уже сброшенной среды выполнять нельзя"
+
+    vec.reset()
+    assert vec.handle.env.resets == 0
+
+
+def test_reset_is_performed_after_a_step():
+    vec = make_vec([
+        ScriptedStep(decisions={10: 0.1}),
+        ScriptedStep(decisions={10: 0.2}),
+    ])
+    vec.reset()
+    vec.step(noop_actions(1))
+    assert vec.handle.stepped_since_reset
+
+    vec.reset()
+    assert vec.handle.env.resets == 1
+    assert not vec.handle.stepped_since_reset

@@ -1,4 +1,4 @@
-using TMPro;
+﻿using TMPro;
 using UnityEngine;
 
 /// <summary>
@@ -25,6 +25,6 @@ public class GridWorldUI : MonoBehaviour
         textState.text = $"State: {agent.CurrentStateIndex}";
         textLastAction.text = $"Action: {agent.LastActionLabel}";
         textReward.text = $"Reward: {agent.GetCumulativeReward():F2}";
-        textResult.text = $"Result: {agent.EpisodeResult}";
+        textResult.text = $"Result: {agent.LastEpisodeResult}";
     }
 }

@@ -50,13 +50,17 @@ class FakeUnityEnv:
         self.obs_dim = obs_dim
         self.behavior_specs = {behavior_name: spec}
         self.script = list(script)
-        self.cursor = -1  # -1 = состояние после reset()
+        # Курсор стоит на нулевом шаге сценария сразу: настоящая среда попадает
+        # к VecUnityEnv уже сброшенной — open_unity_env() вызывает reset() сам.
+        self.cursor = 0
         self.actions_seen: list[np.ndarray] = []
+        self.resets = 0
         self.closed = False
 
     # --- API, которое использует VecUnityEnv ---------------------------
 
     def reset(self) -> None:
+        self.resets += 1
         self.cursor = 0
 
     def step(self) -> None:
