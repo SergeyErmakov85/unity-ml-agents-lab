@@ -1,0 +1,81 @@
+# REINFORCE в среде E05_FoodCollector — урок 2.1, флагманский пример курса.
+#
+# Здесь три вещи впервые: сеточное наблюдение (2, 8, 8), гибридное
+# пространство действий и Monte-Carlo обучение по завершённым эпизодам.
+#
+# Структура блоков — Приложение A инструкции проекта.
+
+experiment:
+  env_id: E05_FoodCollector
+  algo: reinforce
+  seeds: [0, 1, 2]
+  # Бюджет 240k: при 60k выходило ровно 100 шагов градиента на прогон, и метод
+  # не успевал ничего выучить (оценка 0.43). Кривая уходит вверх после 100k.
+  total_steps: 240000       # шагов сбора; шаг = одно решение по всем аренам
+  notes: "Урок 2.1. REINFORCE с baseline, GridSensor и гибридные действия."
+
+env:
+  mode: build
+  build_path: builds/E05_FoodCollector/E05_FoodCollector.exe
+  num_areas: 8
+  time_scale: 20.0
+  no_graphics: true
+  env_parameters:
+    difficulty: 1.0
+
+network:
+  # Формы наблюдений берутся у живой среды: сетка (2, 8, 8) и вектор (6).
+  # Здесь задаётся только архитектура.
+  type: grid_hybrid
+  continuous_size: 2        # тяга и поворот; дискретная ветка приходит из среды
+  conv_channels: [16, 32]
+  hidden_sizes: [128, 128]
+  activation: relu
+  log_std_init: -0.5
+
+algo:
+  gamma: 0.99
+  learning_rate:
+    type: linear
+    start: 0.001
+    end: 0.0
+    decay_steps: 240000
+  baseline: true            # false — «чистый» REINFORCE из урока 2.1, для сравнения
+  # Обновление по 8 завершённым эпизодам, а не по 16. Компромисс прямой:
+  # больше эпизодов в пачке — меньше дисперсия оценки градиента, но вдвое
+  # меньше самих шагов градиента, а их у REINFORCE и так мало (один на пачку).
+  episodes_per_update: 8
+  value_coef: 0.5
+  # Энтропия выше, чем у PPO: у REINFORCE нет обрезки, и рано схлопнувшаяся
+  # политика уже не восстановится — данные собирает она же.
+  entropy_coef: 0.01
+  max_grad_norm: 0.5
+  normalize_advantage: true
+  epsilon:
+    type: constant
+    value: 0.0
+
+eval:
+  every_steps: 24000
+  episodes: 16
+  deterministic: true
+  # Эпизод всегда доживает до MaxStep: провала в задаче сбора нет.
+  # Успехом считается положительная награда — то есть агент собрал больше
+  # хорошей еды, чем плохой, с учётом штрафов за время.
+  success_rule: reward_above
+  success_threshold: 0.0
+
+success_criteria:
+  # Приёмка по ДОЛЕ успешных эпизодов, а не по величине награды. У награды
+  # этой среды нет потолка: еда переставляется, и за 300 решений её можно
+  # собрать сколько успеешь. Поэтому награда сильно шумит от одной оценки
+  # к другой — в зондирующем прогоне соседние оценки дали 6.90, 3.24 и 6.80
+  # при доле успешных 0.75, 0.75 и 1.00 (T-17 в docs/07_TROUBLESHOOTING.md).
+  # Порог по такой величине проверял бы удачу батча оценки, а не политику.
+  metric: Eval/Success Rate
+  threshold: 0.80
+  within_steps: 240000
+
+export:
+  onnx_path: unity/MLAgentsLab/Assets/Envs/E05_FoodCollector/Models/E05_FoodCollector_reinforce.onnx
+  verify: true
