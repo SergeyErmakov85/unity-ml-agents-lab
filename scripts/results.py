@@ -78,6 +78,7 @@ def summarize(runs: list[dict]) -> dict:
     оценка, и это явно помечается.
     """
     by_seed: dict[int, float] = {}
+    success_by_seed: dict[int, float] = {}
     for run in runs:
         seed = int(run.get("seed", -1))
         history = run.get("eval_history") or []
@@ -86,6 +87,11 @@ def summarize(runs: list[dict]) -> dict:
         # Берётся ПОСЛЕДНЯЯ оценка прогона, а не лучшая: лучшая — это выбор
         # по тем же данным, на которых измеряют, и систематически завышает результат.
         by_seed[seed] = float(history[-1][1])
+        # Доля успешных эпизодов той же оценки. Для сред без потолка награды
+        # и для сред с формированием награды приёмка идёт именно по ней
+        # (T-15 и T-17), поэтому сводка обязана показывать обе величины.
+        if len(history[-1]) > 2:
+            success_by_seed[seed] = float(history[-1][2])
 
     if not by_seed:
         return {"seeds": 0}
@@ -105,6 +111,11 @@ def summarize(runs: list[dict]) -> dict:
         "wall_time": float(np.sum([r.get("wall_time_sec", 0.0) for r in runs])),
         "missing_tags": sorted({t for r in runs for t in r.get("missing_required_tags", [])}),
     }
+
+    if len(success_by_seed) == len(seeds):
+        success = np.array([success_by_seed[s] for s in seeds], dtype=np.float64)
+        summary["success_scores"] = success.tolist()
+        summary["success_iqm"] = interquartile_mean(success)
 
     if len(seeds) >= 2:
         ci = stratified_bootstrap_iqm(scores[:, None], resamples=10_000, seed=0)
@@ -128,19 +139,26 @@ def render(runs: dict[tuple[str, str], list[dict]]) -> str:
         "(требование 12.3). Берётся **последняя** оценка каждого прогона, а не лучшая:",
         "выбор лучшей по тем же данным, на которых измеряют, систематически завышает результат.",
         "",
-        "| Среда | Алгоритм | Сидов | IQM | 95% CI | Разброс по сидам | Время, с |",
-        "|---|---|---|---|---|---|---|",
+        "Колонка **IQM награды** сопоставима между средами только по смыслу самой",
+        "среды: у награды `E05_FoodCollector` нет потолка, а награда `E06_Hunter3D`",
+        "содержит смещение формирования. Там, где приёмка задана по исходу эпизода,",
+        "смотреть надо на колонку **IQM успеха** (T-15 и T-17 в",
+        "`docs/07_TROUBLESHOOTING.md`).",
+        "",
+        "| Среда | Алгоритм | Сидов | IQM награды | 95% CI | IQM успеха | Разброс по сидам | Время, с |",
+        "|---|---|---|---|---|---|---|---|",
     ]
 
     for (env_id, algo) in sorted(runs):
         s = summarize(runs[(env_id, algo)])
         if not s["seeds"]:
-            lines.append(f"| `{env_id}` | `{algo}` | 0 | — | — | нет завершённых оценок | — |")
+            lines.append(f"| `{env_id}` | `{algo}` | 0 | — | — | — | нет завершённых оценок | — |")
             continue
         ci = (f"[{s['ci_low']:.4f}, {s['ci_high']:.4f}]"
               if "ci_low" in s else "нужно ≥ 2 сидов")
+        success = f"{s['success_iqm']:.4f}" if "success_iqm" in s else "—"
         lines.append(
-            f"| `{env_id}` | `{algo}` | {s['seeds']} | {s['iqm']:.4f} | {ci} | "
+            f"| `{env_id}` | `{algo}` | {s['seeds']} | {s['iqm']:.4f} | {ci} | {success} | "
             f"[{s['min']:.4f}, {s['max']:.4f}] | {s['wall_time']:.0f} |"
         )
 
@@ -154,7 +172,11 @@ def render(runs: dict[tuple[str, str], list[dict]]) -> str:
             continue
         lines.append(f"- сиды: {s['seed_list']}, бюджет шагов: {s['steps']}")
         lines.append(f"- итоговые оценки: {[round(x, 4) for x in s['scores']]}")
-        lines.append(f"- IQM: **{s['iqm']:.4f}**, среднее {s['mean']:.4f}")
+        lines.append(f"- IQM награды: **{s['iqm']:.4f}**, среднее {s['mean']:.4f}")
+        if "success_iqm" in s:
+            lines.append(f"- доля успешных эпизодов по сидам: "
+                         f"{[round(x, 4) for x in s['success_scores']]}, "
+                         f"IQM **{s['success_iqm']:.4f}**")
         if s["missing_tags"]:
             lines.append(f"- **обязательные теги схемы 11.2 без данных: {s['missing_tags']}**")
         else:

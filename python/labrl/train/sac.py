@@ -1,68 +1,73 @@
-"""Цикл обучения DQN в среде Unity.
+"""Цикл обучения SAC в среде Unity.
 
-Здесь — сбор опыта, наполнение буфера, расписание ε, логирование по схеме
-раздела 11 и периодическая оценка. Правило обновления параметров целиком
-в :meth:`labrl.algos.dqn.DQN.update` (требование 8.7).
+Здесь — сбор опыта, наполнение буфера воспроизведения, расписание обновлений,
+логирование по схеме раздела 11 и периодическая оценка. Правило обновления
+параметров целиком в :meth:`labrl.algos.sac.SAC.update` (требование 8.7).
 
-Особенность сбора при `DecisionPeriod > 1`. Агент запрашивает решение не каждый
-шаг физики, поэтому на большинстве шагов часть слотов неактивна. Переход
-записывается **только** для слотов, вернувших результат; наблюдение
-завершившегося эпизода берётся из ``final_obs``, а не из ``obs`` — там уже
-может лежать начало нового эпизода.
+Чем ритм отличается от on-policy цикла. PPO копит роллаут и выбрасывает его
+после обновления; SAC хранит **весь** опыт и учится на нём многократно. Отсюда
+и главное практическое отличие: обновлений на шаг среды здесь примерно столько
+же, сколько шагов, — метод специально рассчитан на дорогие шаги симуляции.
+
+Про разогрев. Первые ``learning_starts`` шагов действия берутся **равномерно
+случайными**, а не из политики. Причина не в разведке: необученная политика
+и так близка к случайной. Причина в том, что первые обновления на почти пустом
+буфере учат критиков на сильно коррелированной выборке, и эта ошибка потом
+долго вымывается.
 """
 
 from __future__ import annotations
 
-import math
 import time
 from dataclasses import dataclass, field
 from typing import Callable
 
 import numpy as np
 
-from labrl.algos.dqn import DQN
+from labrl.algos.sac import SAC
 from labrl.buffers.replay import ReplayBuffer
 from labrl.envs.vec_unity_env import StepResult, VecUnityEnv
+from labrl.eval.success import REWARD_ABOVE, check_rule, success_rate
 from labrl.logging.tb_logger import TBLogger, Tags
-from labrl.utils.schedules import Schedule
 
 
 @dataclass
-class DQNTrainConfig:
+class SACTrainConfig:
     """Параметры цикла обучения (не метода)."""
 
     #: Шагов сбора опыта. Шаг = один env.step() по всем аренам.
-    total_steps: int = 200_000
+    total_steps: int = 100_000
     #: Ёмкость буфера воспроизведения, переходов.
-    buffer_size: int = 200_000
-    #: Сколько переходов накопить, прежде чем начать обучение. Обучение на почти
-    #: пустом буфере — это обучение на сильно коррелированной выборке, ради
-    #: избавления от которой буфер и заводился.
-    learning_starts: int = 2_000
-    #: Раз во сколько шагов сбора выполнять обновление.
+    buffer_size: int = 300_000
+    #: Сколько переходов накопить случайной политикой, прежде чем учиться.
+    learning_starts: int = 5_000
+    #: Раз во сколько шагов сбора выполнять обновления.
     train_freq: int = 1
     #: Сколько обновлений выполнять за раз.
     gradient_steps: int = 1
     #: Как часто оценивать детерминированную политику, в шагах.
-    eval_every_steps: int = 10_000
+    eval_every_steps: int = 20_000
     #: Сколько эпизодов прогонять при оценке.
     eval_episodes: int = 20
-    #: Как часто писать Perf/Steps Per Second.
+    #: Как часто писать `Perf/Steps Per Second`.
     perf_every_steps: int = 1_000
-    #: Порог награды, выше которого эпизод считается успешным.
+    #: Порог награды для правила ``reward_above``.
     success_threshold: float = 0.0
+    #: Как определять успех эпизода (:mod:`labrl.eval.success`).
+    success_rule: str = REWARD_ABOVE
 
 
 @dataclass
-class DQNTrainResult:
+class SACTrainResult:
     """Итог обучения."""
 
-    algo: DQN
+    algo: SAC
     episode_returns: list[float] = field(default_factory=list)
     episode_lengths: list[int] = field(default_factory=list)
     eval_history: list[tuple[int, float, float]] = field(default_factory=list)
     env_steps: int = 0
     transitions: int = 0
+    updates: int = 0
     wall_time: float = 0.0
 
     @property
@@ -86,33 +91,26 @@ class EvalOutcome:
     success_rate: float
     mean_length: float
     obs: list[np.ndarray]
+    active: np.ndarray
 
 
-def epsilon_greedy_entropy(epsilon: float, num_actions: int) -> float:
-    """Энтропия ε-жадной политики, нат. См. пояснение в `labrl.train.tabular`."""
-    if num_actions < 2:
-        return 0.0
-    p_greedy = 1.0 - epsilon + epsilon / num_actions
-    p_other = epsilon / num_actions
-    terms = [p_greedy] + [p_other] * (num_actions - 1)
-    return float(-sum(p * math.log(p) for p in terms if p > 0.0))
-
-
-def evaluate_greedy(
+def evaluate_deterministic(
     vec: VecUnityEnv,
-    algo: DQN,
+    algo: SAC,
     obs: list[np.ndarray],
     episodes: int,
     success_threshold: float = 0.0,
     max_steps: int | None = None,
+    success_rule: str = REWARD_ABOVE,
 ) -> EvalOutcome:
-    """Оценка детерминированной (жадной) политики — той же, что уйдёт в ONNX.
+    """Оценка детерминированной политики ``tanh(μ)`` — той же, что уйдёт в ONNX.
 
     Среда не сбрасывается: повторный ``env.reset()`` стоит шага с нулевым
-    действием и портит первый эпизод (T-7 в docs/07_TROUBLESHOOTING.md).
-    Вместо сброса — прогрев: эпизоды, начатые под ε-жадной политикой,
-    доигрываются жадной и отбрасываются.
+    действием (T-7 в docs/07_TROUBLESHOOTING.md). Вместо сброса — прогрев:
+    эпизоды, начатые под стохастической политикой, доигрываются
+    детерминированной и отбрасываются.
     """
+    check_rule(success_rule)
     budget = max_steps if max_steps is not None else 2000 * episodes
     n = vec.num_envs
 
@@ -122,12 +120,14 @@ def evaluate_greedy(
 
     returns: list[float] = []
     lengths: list[int] = []
+    terminated: list[bool] = []
+    active = np.ones(n, dtype=bool)
 
     for _ in range(budget):
         if len(returns) >= episodes:
             break
-        actions = algo.greedy_action(vec.flatten_obs(obs))[:, None].astype(np.int32)
-        result = vec.step(actions)
+        result = vec.step(algo.deterministic_action(vec.flatten_obs(obs)))
+        active = result.active
 
         running_return += result.reward
         running_length += (result.active | result.done).astype(np.int64)
@@ -136,6 +136,7 @@ def evaluate_greedy(
             if counting[slot]:
                 returns.append(float(running_return[slot]))
                 lengths.append(int(running_length[slot]))
+                terminated.append(bool(result.terminated[slot]))
             else:
                 counting[slot] = True
             running_return[slot] = 0.0
@@ -151,58 +152,68 @@ def evaluate_greedy(
 
     trimmed = np.array(returns[:episodes])
     return EvalOutcome(
-        mean_reward=float(np.mean(trimmed)),
-        success_rate=float(np.mean(trimmed > success_threshold)),
+        mean_reward=float(trimmed.mean()),
+        success_rate=success_rate(success_rule, trimmed,
+                                  np.array(terminated[:episodes]), success_threshold),
         mean_length=float(np.mean(lengths[:episodes])),
         obs=obs,
+        active=active,
     )
 
 
-def train_dqn(
+def train_sac(
     vec: VecUnityEnv,
-    algo: DQN,
-    epsilon_schedule: Schedule,
+    algo: SAC,
     logger: TBLogger,
-    cfg: DQNTrainConfig | None = None,
+    cfg: SACTrainConfig | None = None,
     seed: int = 0,
     on_eval: Callable[[int, float, float], None] | None = None,
-) -> DQNTrainResult:
-    """Обучает DQN в среде Unity.
+    lr_schedule=None,
+) -> SACTrainResult:
+    """Обучает SAC в среде Unity.
 
     Args:
         vec: векторизованная среда (K арен = K параллельных сред).
         algo: алгоритм; его сети меняются на месте.
-        epsilon_schedule: расписание ε от номера шага сбора.
         logger: логгер TensorBoard.
         cfg: параметры цикла.
         seed: сид генераторов разведки и выборки из буфера.
         on_eval: колбэк ``(step, mean_reward, success_rate)`` после оценки.
+        lr_schedule: расписание шага обучения; ``None`` — постоянный шаг.
     """
-    cfg = cfg or DQNTrainConfig()
+    cfg = cfg or SACTrainConfig()
     rng = np.random.default_rng(seed)
-    result = DQNTrainResult(algo=algo)
+    result = SACTrainResult(algo=algo)
 
     obs = vec.reset()
     n = vec.num_envs
     obs_dim = vec.flatten_obs(obs).shape[1]
-    buffer = ReplayBuffer(cfg.buffer_size, obs_dim, seed=seed)
+    action_dim = algo.action_dim
+    buffer = ReplayBuffer(cfg.buffer_size, obs_dim, seed=seed, action_dim=action_dim)
 
     running_return = np.zeros(n)
     running_length = np.zeros(n, dtype=np.int64)
 
     started = time.perf_counter()
     perf_mark, perf_step = started, 0
-    last_metrics: dict[str, float] = {}
+    metrics: dict[str, float] = {}
 
     for step in range(1, cfg.total_steps + 1):
-        epsilon = float(epsilon_schedule(step))
+        if lr_schedule is not None:
+            algo.set_learning_rate(float(lr_schedule(step)))
 
         current_obs = vec.flatten_obs(obs)
-        action = algo.act(current_obs, epsilon, rng)
-        acted = vec.step(action[:, None].astype(np.int32))
+        if len(buffer) < cfg.learning_starts:
+            # Разогрев: равномерно случайные действия во всём допустимом
+            # диапазоне. Политика на этом этапе всё равно ничего не знает,
+            # а равномерная выборка покрывает пространство лучше, чем
+            # сэмплы из необученной гауссианы.
+            action = rng.uniform(-1.0, 1.0, size=(n, action_dim)).astype(np.float32)
+        else:
+            action = algo.act(current_obs, rng)
 
-        added = _store_transitions(buffer, current_obs, action, acted, vec.flatten_obs)
-        result.transitions += added
+        acted = vec.step(action)
+        result.transitions += _store(buffer, current_obs, action, acted, vec.flatten_obs)
 
         running_return += acted.reward
         running_length += (acted.active | acted.done).astype(np.int64)
@@ -218,21 +229,22 @@ def train_dqn(
         # --- обновление ---------------------------------------------------
         if len(buffer) >= cfg.learning_starts and step % cfg.train_freq == 0:
             for _ in range(cfg.gradient_steps):
-                last_metrics = algo.update(buffer.sample(algo.cfg.batch_size))
+                metrics = algo.update(buffer.sample(algo.cfg.batch_size))
+                result.updates += 1
 
         # --- обязательные теги схемы 11.2 ---------------------------------
-        # Losses/Policy Loss пишется нулём: у DQN нет отдельного актора, но
-        # состав тегов не должен зависеть от алгоритма — иначе графики разных
-        # методов не лягут на одну ось (docs/05_TENSORBOARD.md §2).
-        logger.scalar(Tags.VALUE_LOSS, last_metrics.get("loss", 0.0), step)
-        logger.scalar(Tags.POLICY_LOSS, 0.0, step)
-        logger.scalar(Tags.ENTROPY, epsilon_greedy_entropy(epsilon, algo.num_actions), step)
+        logger.scalar(Tags.VALUE_LOSS, metrics.get("value_loss", 0.0), step)
+        logger.scalar(Tags.POLICY_LOSS, metrics.get("policy_loss", 0.0), step)
+        logger.scalar(Tags.ENTROPY, metrics.get("entropy", 0.0), step)
         logger.scalar(Tags.LEARNING_RATE, algo.cfg.learning_rate, step)
-        logger.scalar(Tags.EPSILON, epsilon, step)
-        logger.custom("TD Error", last_metrics.get("td_error_abs", 0.0), step)
-        logger.custom("Q Max", last_metrics.get("q_max", 0.0), step)
-        logger.custom("Q Mean", last_metrics.get("q_mean", 0.0), step)
-        logger.custom("Grad Norm", last_metrics.get("grad_norm", 0.0), step)
+        # Разведка SAC живёт в энтропийной части цели, а не в ε.
+        logger.scalar(Tags.EPSILON, 0.0, step)
+        logger.custom("Alpha", metrics.get("alpha", 0.0), step)
+        logger.custom("Alpha Loss", metrics.get("alpha_loss", 0.0), step)
+        logger.custom("TD Error", metrics.get("td_error_abs", 0.0), step)
+        logger.custom("Q Mean", metrics.get("q_mean", 0.0), step)
+        logger.custom("Q Max", metrics.get("q_max", 0.0), step)
+        logger.custom("Grad Norm", metrics.get("grad_norm", 0.0), step)
         logger.custom("Buffer Size", float(len(buffer)), step)
 
         if acted.info.get("env_stats"):
@@ -246,7 +258,8 @@ def train_dqn(
         obs = acted.obs
 
         if step % cfg.eval_every_steps == 0 or step == cfg.total_steps:
-            outcome = evaluate_greedy(vec, algo, obs, cfg.eval_episodes, cfg.success_threshold)
+            outcome = evaluate_deterministic(vec, algo, obs, cfg.eval_episodes,
+                                             cfg.success_threshold, success_rule=cfg.success_rule)
             logger.scalar(Tags.EVAL_MEAN_REWARD, outcome.mean_reward, step)
             logger.scalar(Tags.EVAL_SUCCESS_RATE, outcome.success_rate, step)
             logger.custom("Eval Episode Length", outcome.mean_length, step)
@@ -263,20 +276,21 @@ def train_dqn(
     return result
 
 
-def _store_transitions(
+def _store(
     buffer: ReplayBuffer,
     obs: np.ndarray,
     action: np.ndarray,
     result: StepResult,
-    flatten: Callable[[list[np.ndarray]], np.ndarray] | None = None,
+    flatten: Callable[[list[np.ndarray]], np.ndarray],
 ) -> int:
     """Кладёт в буфер переходы тех слотов, что вернули результат."""
-    flatten = flatten or (lambda obs: obs[0])
     done = result.terminated | result.truncated
     usable = done | result.active
     if not usable.any():
         return 0
 
+    # Наблюдение завершившегося эпизода берётся из final_obs: в obs там уже
+    # может лежать начало нового эпизода.
     next_obs = np.where(done[:, None], flatten(result.final_obs), flatten(result.obs))
 
     return buffer.add_batch(

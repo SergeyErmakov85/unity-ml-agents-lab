@@ -28,19 +28,30 @@ from labrl.algos.a2c import A2C, A2CConfig  # noqa: E402
 from labrl.algos.bandits import STRATEGIES, Bandit, BanditConfig  # noqa: E402
 from labrl.algos.dqn import DQN, DQNConfig  # noqa: E402
 from labrl.algos.ppo import PPO, PPOConfig  # noqa: E402
+from labrl.algos.reinforce import REINFORCE, ReinforceConfig  # noqa: E402
+from labrl.algos.sac import SAC, SACConfig  # noqa: E402
 from labrl.algos.tabular.q_learning import QLearning, QLearningConfig  # noqa: E402
 from labrl.envs.state_encoders import BoxDiscretizer, OneHotStateEncoder  # noqa: E402
 from labrl.envs.unity_env import open_unity_env  # noqa: E402
+from labrl.eval.success import REWARD_ABOVE, check_rule  # noqa: E402
 from labrl.envs.vec_unity_env import VecUnityEnv  # noqa: E402
-from labrl.export.onnx_export import ActionSpecLite, export_policy_to_onnx  # noqa: E402
+from labrl.export.onnx_export import (  # noqa: E402
+    ActionSpecLite,
+    _concat_obs as _DEFAULT_COMBINER,
+    export_policy_to_onnx,
+)
 from labrl.export.onnx_verify import verify_onnx_model  # noqa: E402
 from labrl.logging.run_dir import create_run_dir  # noqa: E402
 from labrl.logging.tb_logger import TBLogger, git_commit_hash  # noqa: E402
 from labrl.nets.gaussian_policy import GaussianPolicyNetwork  # noqa: E402
-from labrl.nets.mlp import MLPQNetwork, MLPValueNetwork  # noqa: E402
+from labrl.nets.hybrid_policy import GridHybridPolicy, GridValueNetwork  # noqa: E402
+from labrl.nets.mlp import MLPContinuousQNetwork, MLPQNetwork, MLPValueNetwork  # noqa: E402
+from labrl.nets.squashed_gaussian import SquashedGaussianPolicy  # noqa: E402
 from labrl.train.bandit import BanditTrainConfig, train_bandit  # noqa: E402
 from labrl.train.dqn import DQNTrainConfig, train_dqn  # noqa: E402
 from labrl.train.onpolicy import OnPolicyTrainConfig, train_on_policy  # noqa: E402
+from labrl.train.reinforce import ReinforceTrainConfig, train_reinforce  # noqa: E402
+from labrl.train.sac import SACTrainConfig, train_sac  # noqa: E402
 from labrl.train.tabular import TabularTrainConfig, train_q_learning  # noqa: E402
 from labrl.utils.checkpoint import save_checkpoint  # noqa: E402
 from labrl.utils.config import ExperimentConfig, dump_config, load_config, resolve_path  # noqa: E402
@@ -83,7 +94,9 @@ def learning_rate_schedule(cfg: ExperimentConfig) -> Schedule:
     return ConstantSchedule(float(spec))
 
 
-def build_algo(cfg: ExperimentConfig, obs_dim: int, num_actions: int, seed: int = 0):
+def build_algo(cfg: ExperimentConfig, obs_dim: int, num_actions: int, seed: int = 0,
+               obs_shapes: list[tuple[int, ...]] | None = None,
+               discrete_branches: tuple[int, ...] = ()):
     """Создаёт алгоритм по конфигу.
 
     Сеть собирается здесь же, из блока `network`. В ноутбуке этот шаг делает
@@ -170,6 +183,66 @@ def build_algo(cfg: ExperimentConfig, obs_dim: int, num_actions: int, seed: int 
             device=device, seed=seed,
         )
 
+    if cfg.algo_name == "reinforce":
+        # Единственная среда с сеточным наблюдением: формы приходят от живой
+        # среды, а не из конфига — источник истины для них Unity (реестр 4.2).
+        if not obs_shapes or len(obs_shapes) != 2 or len(obs_shapes[0]) != 3:
+            raise ValueError(
+                "REINFORCE в этой лаборатории рассчитан на среду с двумя наблюдениями: "
+                f"сеткой (C, H, W) и вектором; получено {obs_shapes}"
+            )
+        grid_shape = tuple(int(x) for x in obs_shapes[0])
+        vector_dim = int(obs_shapes[1][0])
+        conv = tuple(cfg.network.get("conv_channels", (16, 32)))
+        hidden = tuple(cfg.network.get("hidden_sizes", (128, 128)))
+        activation = cfg.network.get("activation", "relu")
+        device = resolve_device("auto")
+
+        policy_net = GridHybridPolicy(
+            grid_shape, vector_dim, int(cfg.network["continuous_size"]),
+            tuple(int(b) for b in discrete_branches), conv, hidden, activation,
+            log_std_init=float(cfg.network.get("log_std_init", -0.5)),
+        )
+        value_net = (GridValueNetwork(grid_shape, vector_dim, conv, hidden, activation)
+                     if bool(cfg.algo.get("baseline", True)) else None)
+        return REINFORCE(
+            policy_net, value_net,
+            ReinforceConfig(
+                gamma=float(cfg.algo["gamma"]),
+                learning_rate=float(learning_rate_schedule(cfg)(0)),
+                value_coef=float(cfg.algo.get("value_coef", 0.5)),
+                entropy_coef=float(cfg.algo.get("entropy_coef", 0.01)),
+                max_grad_norm=float(cfg.algo.get("max_grad_norm", 0.5)),
+                normalize_advantage=bool(cfg.algo.get("normalize_advantage", True)),
+            ),
+            device=device,
+        )
+
+    if cfg.algo_name == "sac":
+        hidden = tuple(cfg.network.get("hidden_sizes", (256, 256)))
+        critic_hidden = tuple(cfg.network.get("critic_hidden_sizes", hidden))
+        activation = cfg.network.get("activation", "relu")
+        device = resolve_device("auto")
+        policy_net = SquashedGaussianPolicy(obs_dim, num_actions, hidden, activation)
+        # Два критика обязаны быть инициализированы независимо: минимум из двух
+        # одинаковых оценок не гасил бы переоценку, а повторял бы её.
+        q1 = MLPContinuousQNetwork(obs_dim, num_actions, critic_hidden, activation)
+        q2 = MLPContinuousQNetwork(obs_dim, num_actions, critic_hidden, activation)
+        return SAC(
+            policy_net, q1, q2,
+            SACConfig(
+                gamma=float(cfg.algo["gamma"]),
+                learning_rate=float(learning_rate_schedule(cfg)(0)),
+                batch_size=int(cfg.algo["batch_size"]),
+                tau=float(cfg.algo.get("tau", 0.005)),
+                init_alpha=float(cfg.algo.get("init_alpha", 0.2)),
+                autotune_alpha=bool(cfg.algo.get("autotune_alpha", True)),
+                target_entropy=cfg.algo.get("target_entropy"),
+                max_grad_norm=float(cfg.algo.get("max_grad_norm", 0.0)),
+            ),
+            device=device,
+        )
+
     raise ValueError(
         f"алгоритм {cfg.algo_name!r} пока не поддержан скриптом; "
         "добавьте ветку в build_algo и цикл в labrl.train"
@@ -213,7 +286,11 @@ def run_seed(cfg: ExperimentConfig, seed: int, quick: bool, worker_id: int = 0) 
 
         discrete = tuple(vec.action_spec.discrete_branches)
         num_actions = int(discrete[0]) if discrete else int(vec.action_spec.continuous_size)
-        algo = build_algo(cfg, vec.single_obs_dim, num_actions, seed)
+        # single_obs_dim определён только для векторных сенсоров; у среды
+        # с сеткой его вычислять нельзя, и алгоритм получает формы как есть.
+        obs_dim = 0 if cfg.algo_name == "reinforce" else vec.single_obs_dim
+        algo = build_algo(cfg, obs_dim, num_actions, seed,
+                          obs_shapes=vec.obs_shapes, discrete_branches=discrete)
         logger = TBLogger(run.tb)
 
         def report(step: int, reward: float, success: float) -> None:
@@ -226,6 +303,10 @@ def run_seed(cfg: ExperimentConfig, seed: int, quick: bool, worker_id: int = 0) 
         # для сред «дойди до цели», но не для сред «продержись как можно дольше»,
         # где любой эпизод даёт положительную сумму.
         success_threshold = float(cfg.eval.get("success_threshold", 0.0))
+        # Как определять успех эпизода. По умолчанию — по награде; в средах
+        # с формированием награды она мерой качества не является, и правило
+        # обязано смотреть на исход эпизода (labrl.eval.success).
+        success_rule = check_rule(cfg.eval.get("success_rule", REWARD_ABOVE))
         schedule = build_schedule(cfg.algo["epsilon"])
 
         if cfg.algo_name in STRATEGIES:
@@ -236,6 +317,37 @@ def run_seed(cfg: ExperimentConfig, seed: int, quick: bool, worker_id: int = 0) 
                                       success_threshold=success_threshold),
                 seed=seed, on_eval=report,
             )
+        elif cfg.algo_name == "reinforce":
+            result = train_reinforce(
+                vec=vec, algo=algo, logger=logger,
+                cfg=ReinforceTrainConfig(
+                    total_steps=total_steps,
+                    episodes_per_update=int(cfg.algo["episodes_per_update"]),
+                    eval_every_steps=eval_every,
+                    eval_episodes=eval_episodes,
+                    success_threshold=success_threshold,
+                    success_rule=success_rule,
+                ),
+                seed=seed, on_eval=report,
+                lr_schedule=learning_rate_schedule(cfg),
+            )
+        elif cfg.algo_name == "sac":
+            result = train_sac(
+                vec=vec, algo=algo, logger=logger,
+                cfg=SACTrainConfig(
+                    total_steps=total_steps,
+                    buffer_size=int(cfg.algo["buffer_size"]),
+                    learning_starts=int(cfg.algo["learning_starts"]),
+                    train_freq=int(cfg.algo.get("train_freq", 1)),
+                    gradient_steps=int(cfg.algo.get("gradient_steps", 1)),
+                    eval_every_steps=eval_every,
+                    eval_episodes=eval_episodes,
+                    success_threshold=success_threshold,
+                    success_rule=success_rule,
+                ),
+                seed=seed, on_eval=report,
+                lr_schedule=learning_rate_schedule(cfg),
+            )
         elif cfg.algo_name in ("a2c", "ppo"):
             result = train_on_policy(
                 vec=vec, algo=algo, logger=logger,
@@ -245,6 +357,7 @@ def run_seed(cfg: ExperimentConfig, seed: int, quick: bool, worker_id: int = 0) 
                     eval_every_steps=eval_every,
                     eval_episodes=eval_episodes,
                     success_threshold=success_threshold,
+                    success_rule=success_rule,
                 ),
                 seed=seed, on_eval=report,
                 lr_schedule=learning_rate_schedule(cfg),
@@ -297,17 +410,26 @@ def run_seed(cfg: ExperimentConfig, seed: int, quick: bool, worker_id: int = 0) 
 
         onnx_path = _export(cfg, algo, run.onnx / "policy.onnx", vec)
 
+        # Приёмочное число выбирается по метрике из success_criteria: в средах
+        # с формированием награды сравнивать порог с сырой наградой нельзя
+        # (docs/07_TROUBLESHOOTING.md, T-15).
+        achieved = (result.last_eval_success
+                    if "Success Rate" in cfg.success_criteria.metric
+                    else result.last_eval_reward)
+
         summary = {
             "seed": seed,
             "run_dir": str(run.root),
             "eval_reward": result.last_eval_reward,
             "eval_success": result.last_eval_success,
+            "criteria_metric": cfg.success_criteria.metric,
+            "achieved": achieved,
             "episodes": len(result.episode_returns),
             "wall_time_sec": round(result.wall_time, 1),
             "missing_required_tags": list(missing),
             "onnx": str(onnx_path) if onnx_path else None,
             "threshold": cfg.success_criteria.threshold,
-            "passed": bool(result.last_eval_reward >= cfg.success_criteria.threshold),
+            "passed": bool(achieved >= cfg.success_criteria.threshold),
         }
         print(json.dumps(summary, ensure_ascii=False, indent=2), flush=True)
         return summary
@@ -325,13 +447,18 @@ def _export(cfg: ExperimentConfig, algo, dest: Path, vec: VecUnityEnv) -> Path |
     obs_shapes = vec.obs_shapes
     policy = algo.policy_module()
 
-    path = export_policy_to_onnx(policy, spec, obs_shapes, dest)
+    # Многомерное наблюдение (сетка, картинка) нельзя приклеить к вектору:
+    # политика получает наблюдения отдельными аргументами в порядке obs_0, obs_1, …
+    combiner = None if any(len(shape) > 1 for shape in obs_shapes) else _DEFAULT_COMBINER
+
+    path = export_policy_to_onnx(policy, spec, obs_shapes, dest, obs_combiner=combiner)
 
     if cfg.export.get("verify", True):
         # Наблюдения из реального распределения среды: требование 10.5 говорит
         # именно о нём, а не о случайном шуме.
         sample = _collect_sample_obs(vec, count=64)
-        result = verify_onnx_model(path, policy, spec, obs_shapes, sample_obs=sample)
+        result = verify_onnx_model(path, policy, spec, obs_shapes, sample_obs=sample,
+                                   obs_combiner=combiner)
         print(result.report(), flush=True)
         result.raise_if_failed()
 
@@ -352,18 +479,22 @@ def _collect_sample_obs(vec: VecUnityEnv, count: int) -> list[np.ndarray]:
     rng = np.random.default_rng(0)
     branches = tuple(vec.action_spec.discrete_branches)
     continuous = int(vec.action_spec.continuous_size)
-    collected: list[np.ndarray] = []
+    collected: list[list[np.ndarray]] = [[] for _ in vec.obs_shapes]
     obs = vec.reset()
-    while sum(len(c) for c in collected) < count:
-        collected.append(obs[0].copy())
+    while sum(len(c) for c in collected[0]) < count:
+        for sensor, batch in enumerate(obs):
+            collected[sensor].append(batch.copy())
+        # Порядок столбцов задан обёрткой среды: сначала непрерывная часть,
+        # затем по индексу на дискретную ветку (см. VecUnityEnv._set_actions).
+        parts = []
+        if continuous:
+            parts.append(rng.uniform(-1.0, 1.0, size=(vec.num_envs, continuous)))
         if branches:
-            actions = np.stack(
-                [rng.integers(0, b, size=vec.num_envs) for b in branches], axis=1
-            ).astype(np.int32)
-        else:
-            actions = rng.uniform(-1.0, 1.0, size=(vec.num_envs, continuous)).astype(np.float32)
+            parts.append(np.stack([rng.integers(0, b, size=vec.num_envs) for b in branches], axis=1))
+        actions = np.concatenate(parts, axis=1).astype(np.float32 if continuous else np.int32)
         obs = vec.step(actions).obs
-    return [np.concatenate(collected, axis=0)[:count]]
+    # По одному массиву на сенсор: верификатор подаёт их в граф как obs_0, obs_1, …
+    return [np.concatenate(parts, axis=0)[:count] for parts in collected]
 
 
 def main() -> int:

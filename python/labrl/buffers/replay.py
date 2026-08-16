@@ -28,7 +28,7 @@ class Batch:
     """Батч переходов. Все поля — массивы длины ``batch_size``."""
 
     obs: np.ndarray          # (B, obs_dim)
-    action: np.ndarray       # (B,) int64
+    action: np.ndarray       # (B,) int64 либо (B, action_dim) float32
     reward: np.ndarray       # (B,) float32
     next_obs: np.ndarray     # (B, obs_dim)
     terminated: np.ndarray   # (B,) bool — истинное завершение
@@ -46,6 +46,9 @@ class ReplayBuffer:
             самые старые.
         obs_dim: размерность наблюдения.
         seed: сид генератора выборки — прогон должен воспроизводиться.
+        action_dim: размерность непрерывного действия. ``None`` — действия
+            дискретные и хранятся одним целым числом (DQN, табличные методы);
+            число — действия непрерывные и хранятся вектором (SAC).
 
     Про хранение ``terminated`` и ``truncated`` **раздельно**: цель обновления
     обнуляет будущее только при ``terminated``. Если сохранить один флаг
@@ -53,9 +56,13 @@ class ReplayBuffer:
     искажено (см. `labrl.algos.dqn`).
     """
 
-    def __init__(self, capacity: int, obs_dim: int, seed: int = 0) -> None:
+    def __init__(self, capacity: int, obs_dim: int, seed: int = 0,
+                 action_dim: int | None = None) -> None:
         if capacity <= 0:
             raise ValueError(f"capacity должна быть > 0, получено {capacity}")
+        if action_dim is not None and action_dim <= 0:
+            raise ValueError(f"action_dim должен быть > 0, получено {action_dim}")
+        self.action_dim = action_dim
 
         self.capacity = int(capacity)
         self.obs_dim = int(obs_dim)
@@ -63,7 +70,8 @@ class ReplayBuffer:
 
         self._obs = np.zeros((self.capacity, self.obs_dim), dtype=np.float32)
         self._next_obs = np.zeros((self.capacity, self.obs_dim), dtype=np.float32)
-        self._action = np.zeros(self.capacity, dtype=np.int64)
+        self._action = (np.zeros(self.capacity, dtype=np.int64) if action_dim is None
+                        else np.zeros((self.capacity, action_dim), dtype=np.float32))
         self._reward = np.zeros(self.capacity, dtype=np.float32)
         self._terminated = np.zeros(self.capacity, dtype=bool)
         self._truncated = np.zeros(self.capacity, dtype=bool)

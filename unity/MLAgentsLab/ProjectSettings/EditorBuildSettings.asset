@@ -6,7 +6,19 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
+    path: Assets/Envs/E00_Bandit/Scenes/E00_Bandit.unity
+    guid: 5f50bb0f83fb36c49a0c4ae9a61fb827
+  - enabled: 1
     path: Assets/Envs/E01_GridWorld/Scenes/E01_GridWorld.unity
     guid: 551d79fcd3c01d44eaf15aeb11241036
+  - enabled: 1
+    path: Assets/Envs/E02_CartPoleUnity/Scenes/E02_CartPoleUnity.unity
+    guid: 5c6bcd45e95359647bc6309005038e9d
+  - enabled: 1
+    path: Assets/Envs/E03_RollerBall/Scenes/E03_RollerBall.unity
+    guid: edf19b02cd5368643a85d7d53dd5ffd9
+  - enabled: 1
+    path: Assets/Envs/E04_BallBalance/Scenes/E04_BallBalance.unity
+    guid: 70e3a02deee56ee459f0d4f4e906ebe4
   m_configObjects:
     com.unity.dt.app-ui: {fileID: 11400000, guid: 1b1c20d82303e4b5781c3ef50ac1449f, type: 2}

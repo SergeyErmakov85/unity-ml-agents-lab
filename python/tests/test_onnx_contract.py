@@ -118,11 +118,75 @@ def test_wrapper_handles_multiple_discrete_branches():
     assert torch.all((actions[:, 1] >= 0) & (actions[:, 1] < 2))
 
 
-def test_wrapper_rejects_recurrent_and_hybrid_spaces():
+def test_wrapper_rejects_recurrent_policies():
     with pytest.raises(NotImplementedError, match="рекуррентные"):
         MLAgentsPolicyWrapper(tiny_net(4, 4), DISCRETE_SPEC, memory_size=8)
-    with pytest.raises(NotImplementedError, match="гибридное"):
-        MLAgentsPolicyWrapper(tiny_net(4, 6), ActionSpecLite(continuous_size=2, discrete_branches=(4,)))
+
+
+def test_wrapper_supports_hybrid_action_space():
+    """Гибрид: в графе присутствуют обе группы выходов действий.
+
+    Контракт ML-Agents это допускает напрямую, поэтому и обёртка обязана:
+    `E05_FoodCollector` управляется одновременно непрерывным движением
+    и дискретным переключателем.
+    """
+    spec = ActionSpecLite(continuous_size=2, discrete_branches=(3,))
+
+    class HybridNet(nn.Module):
+        """Возвращает пару (среднее, логиты) — то, чего ждёт обёртка."""
+
+        def __init__(self):
+            super().__init__()
+            self.mean = nn.Linear(4, 2)
+            self.logits = nn.Linear(4, 3)
+
+        def forward(self, obs):
+            return self.mean(obs), self.logits(obs)
+
+    names = contract_output_names(spec)
+    assert names == [
+        "version_number", "memory_size",
+        "continuous_actions", "continuous_action_output_shape",
+        "deterministic_continuous_actions",
+        "discrete_actions", "discrete_action_output_shape",
+        "deterministic_discrete_actions",
+    ]
+
+    wrapper = MLAgentsPolicyWrapper(HybridNet(), spec).eval()
+    out = dict(zip(names, wrapper(torch.randn(4, 4), torch.ones(4, 3), torch.zeros(4, 1, 0))))
+
+    assert out["continuous_actions"].shape == (4, 2)
+    assert torch.all(out["continuous_actions"].abs() <= 1.0)
+    assert out["discrete_actions"].shape == (4, 1)
+    assert torch.all((out["discrete_actions"] >= 0) & (out["discrete_actions"] < 3))
+
+
+def test_hybrid_policy_must_return_a_pair():
+    """Одиночный тензор для гибрида — ошибка, а не «как-нибудь разберёмся»."""
+    spec = ActionSpecLite(continuous_size=2, discrete_branches=(3,))
+    wrapper = MLAgentsPolicyWrapper(tiny_net(4, 5), spec).eval()
+    with pytest.raises(ValueError, match="кортеж"):
+        wrapper(torch.randn(2, 4), torch.ones(2, 3), torch.zeros(2, 1, 0))
+
+
+def test_wrapper_can_pass_observations_separately():
+    """obs_combiner=None: политика получает наблюдения отдельными аргументами.
+
+    Так работают среды, где одно из наблюдений многомерно и склеить его
+    с вектором нельзя.
+    """
+    class TwoInputNet(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.head = nn.Linear(2 * 3 * 3 + 4, 4)
+
+        def forward(self, grid, vector):
+            return self.head(torch.cat([grid.flatten(start_dim=1), vector], dim=1))
+
+    wrapper = MLAgentsPolicyWrapper(TwoInputNet(), DISCRETE_SPEC, obs_combiner=None).eval()
+    out = wrapper(torch.randn(2, 2, 3, 3), torch.randn(2, 4), torch.ones(2, 4), torch.zeros(2, 1, 0))
+    actions = dict(zip(contract_output_names(DISCRETE_SPEC), out))["discrete_actions"]
+    assert actions.shape == (2, 1)
 
 
 # --- сквозной экспорт и верификация -------------------------------------

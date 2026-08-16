@@ -28,6 +28,7 @@ import numpy as np
 
 from labrl.buffers.rollout import RolloutBuffer
 from labrl.envs.vec_unity_env import VecUnityEnv
+from labrl.eval.success import REWARD_ABOVE, check_rule, success_rate
 from labrl.logging.tb_logger import TBLogger, Tags
 from labrl.utils.schedules import Schedule
 
@@ -60,7 +61,12 @@ class OnPolicyTrainConfig:
     #: Как часто писать `Perf/Steps Per Second`.
     perf_every_steps: int = 1_000
     #: Порог награды, выше которого эпизод считается успешным.
+    #: Используется только правилом ``reward_above``.
     success_threshold: float = 0.0
+    #: Как определять успех эпизода: см. :mod:`labrl.eval.success`.
+    #: В средах с формированием награды сырая награда мерой качества
+    #: не является, и правило обязано смотреть на исход эпизода.
+    success_rule: str = REWARD_ABOVE
 
 
 @dataclass
@@ -110,6 +116,7 @@ def evaluate_deterministic(
     episodes: int,
     success_threshold: float = 0.0,
     max_steps: int | None = None,
+    success_rule: str = REWARD_ABOVE,
 ) -> EvalOutcome:
     """Оценка детерминированной политики — той же, что уйдёт в ONNX.
 
@@ -132,12 +139,14 @@ def evaluate_deterministic(
 
     returns: list[float] = []
     lengths: list[int] = []
+    terminated: list[bool] = []
     active = np.ones(n, dtype=bool)
+    check_rule(success_rule)
 
     for _ in range(budget):
         if len(returns) >= episodes:
             break
-        actions = algo.deterministic_action(obs[0])
+        actions = algo.deterministic_action(vec.flatten_obs(obs))
         result = vec.step(actions)
         active = result.active
 
@@ -148,6 +157,9 @@ def evaluate_deterministic(
             if counting[slot]:
                 returns.append(float(running_return[slot]))
                 lengths.append(int(running_length[slot]))
+                # Исход эпизода берётся у среды, а не выводится из награды:
+                # см. labrl.eval.success.
+                terminated.append(bool(result.terminated[slot]))
             else:
                 counting[slot] = True
             running_return[slot] = 0.0
@@ -164,7 +176,8 @@ def evaluate_deterministic(
     trimmed = np.array(returns[:episodes])
     return EvalOutcome(
         mean_reward=float(trimmed.mean()),
-        success_rate=float((trimmed > success_threshold).mean()),
+        success_rate=success_rate(success_rule, trimmed,
+                                  np.array(terminated[:episodes]), success_threshold),
         mean_length=float(np.mean(lengths[:episodes])),
         obs=obs,
         active=active,
@@ -216,7 +229,7 @@ def train_on_policy(
         if lr_schedule is not None:
             algo.set_learning_rate(float(lr_schedule(step)))
 
-        current_obs = obs[0]
+        current_obs = vec.flatten_obs(obs)
         out = algo.act(current_obs, rng)
         acted = vec.step(out.env_action)
 
@@ -225,7 +238,8 @@ def train_on_policy(
         # выучил бы, что нехватка времени равносильна провалу.
         bootstrap = np.zeros(n, dtype=np.float32)
         if acted.truncated.any():
-            bootstrap[acted.truncated] = algo.value(acted.final_obs[0][acted.truncated])
+            bootstrap[acted.truncated] = algo.value(
+                vec.flatten_obs(acted.final_obs)[acted.truncated])
 
         stored = 0
         for slot in np.flatnonzero(acting):
@@ -263,7 +277,7 @@ def train_on_policy(
             # Продолжение цепочки GAE для слотов, чей последний записанный шаг
             # не завершил эпизод. Для слота, закончившего эпизод, это значение
             # не используется (см. RolloutBuffer.compute).
-            last_values = algo.value(obs[0])
+            last_values = algo.value(vec.flatten_obs(obs))
             metrics = algo.update(buffer.compute(last_values))
             buffer.clear()
             result.updates += 1
@@ -291,7 +305,8 @@ def train_on_policy(
             perf_mark, perf_step = now, step
 
         if step % cfg.eval_every_steps == 0 or step == cfg.total_steps:
-            outcome = evaluate_deterministic(vec, algo, obs, cfg.eval_episodes, cfg.success_threshold)
+            outcome = evaluate_deterministic(vec, algo, obs, cfg.eval_episodes,
+                                             cfg.success_threshold, success_rule=cfg.success_rule)
             logger.scalar(Tags.EVAL_MEAN_REWARD, outcome.mean_reward, step)
             logger.scalar(Tags.EVAL_SUCCESS_RATE, outcome.success_rate, step)
             logger.custom("Eval Episode Length", outcome.mean_length, step)

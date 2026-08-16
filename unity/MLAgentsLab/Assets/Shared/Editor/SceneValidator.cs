@@ -38,7 +38,7 @@ namespace LabRL.EditorTools
     public static class SceneValidator
     {
         const string EnvsFolder = "Assets/Envs";
-        static readonly string[] RequiredTags = { "agent", "goal", "trap", "wall" };
+        static readonly string[] RequiredTags = { "agent", "goal", "trap", "wall", "obstacle" };
 
         /// <summary>Одна найденная проблема.</summary>
         public readonly struct Issue

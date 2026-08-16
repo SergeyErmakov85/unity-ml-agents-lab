@@ -147,6 +147,39 @@ class VecUnityEnv:
             )
         return sum(shape[0] for shape in self.obs_shapes)
 
+    @staticmethod
+    def flatten_obs(obs: list[np.ndarray]) -> np.ndarray:
+        """Склеивает наблюдения всех сенсоров в один вектор на слот.
+
+        Среда может отдавать несколько наблюдений: например, `E06_Hunter3D`
+        даёт ``obs_0`` от лучевого сенсора и ``obs_1`` от векторного. Политика
+        принимает один вектор, поэтому их нужно склеить — и склеить **в том же
+        порядке**, в каком это делает обёртка экспорта
+        (:func:`labrl.export.onnx_export._concat_obs`). Порядок — это порядок
+        сенсоров в Unity, и он определяется не нами: ML-Agents сортирует сенсоры
+        по имени (`Agent.InitializeSensors`).
+
+        Расхождение порядка здесь и в графе ONNX не даёт ни ошибки, ни
+        предупреждения: обучение идёт нормально, а в Unity агент ведёт себя
+        так, будто ему подменили органы чувств.
+
+        Args:
+            obs: список массивов ``(N, d_i)`` по сенсорам.
+
+        Returns:
+            ``(N, Σd_i)``. При единственном сенсоре возвращается он сам,
+            без копирования.
+        """
+        if len(obs) == 1:
+            return obs[0]
+        if any(o.ndim != 2 for o in obs):
+            raise ValueError(
+                f"склейка рассчитана на векторные сенсоры (N, d); "
+                f"формы: {[o.shape for o in obs]}. Для визуальных наблюдений "
+                "политика обязана принимать список тензоров"
+            )
+        return np.concatenate(obs, axis=1)
+
     # --- жизненный цикл -------------------------------------------------
 
     def reset(self) -> list[np.ndarray]:
@@ -191,7 +224,9 @@ class VecUnityEnv:
 
         Args:
             actions: ``(N, num_branches)`` целых — для дискретных действий,
-                ``(N, continuous_size)`` вещественных — для непрерывных.
+                ``(N, continuous_size)`` вещественных — для непрерывных,
+                ``(N, continuous_size + num_branches)`` — для гибридных
+                (сначала непрерывная часть, затем индексы веток).
                 Строки неактивных слотов игнорируются, но массив обязан быть
                 полной длины ``N``: так индекс строки всегда равен номеру слота.
 
@@ -235,11 +270,26 @@ class VecUnityEnv:
         rows = np.array([self._pending[a] for a in agent_ids], dtype=np.int64)
         selected = actions[rows]
 
+        continuous_size = int(self.action_spec.continuous_size)
+        discrete_size = int(self.action_spec.discrete_size)
+        selected = selected.reshape(len(rows), -1)
+
+        expected = continuous_size + discrete_size
+        if selected.shape[1] != expected:
+            raise ValueError(
+                f"действие обязано иметь {expected} столбцов "
+                f"({continuous_size} непрерывных + {discrete_size} дискретных веток), "
+                f"получено {selected.shape[1]}"
+            )
+
+        # Гибридное пространство: первые continuous_size столбцов — непрерывная
+        # часть, остальные — по одному индексу на дискретную ветку. Порядок
+        # задан ML-Agents (`ActionTuple`), а не нами.
         action_tuple = ActionTuple()
-        if self.action_spec.continuous_size > 0:
-            action_tuple.add_continuous(selected.astype(np.float32).reshape(len(rows), -1))
-        if self.action_spec.discrete_size > 0:
-            action_tuple.add_discrete(selected.astype(np.int32).reshape(len(rows), -1))
+        if continuous_size > 0:
+            action_tuple.add_continuous(selected[:, :continuous_size].astype(np.float32))
+        if discrete_size > 0:
+            action_tuple.add_discrete(selected[:, continuous_size:].astype(np.int32))
 
         self.handle.env.set_actions(self.behavior_name, action_tuple)
 

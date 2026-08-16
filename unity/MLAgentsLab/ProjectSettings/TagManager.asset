@@ -8,6 +8,7 @@ TagManager:
   - goal
   - trap
   - wall
+  - obstacle
   layers:
   - Default
   - TransparentFX

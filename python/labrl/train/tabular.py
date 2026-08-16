@@ -155,7 +155,7 @@ def evaluate_greedy(
     for _ in range(budget):
         if len(returns) >= episodes:
             break
-        actions = algo.greedy_action(algo.encoder.index(obs[0]))[:, None].astype(np.int32)
+        actions = algo.greedy_action(algo.encoder.index(vec.flatten_obs(obs)))[:, None].astype(np.int32)
         result = vec.step(actions)
 
         running_return += result.reward
@@ -235,13 +235,13 @@ def train_q_learning(
         if lr_schedule is not None:
             algo.set_learning_rate(float(lr_schedule(step)))
 
-        state = algo.encoder.index(obs[0])
+        state = algo.encoder.index(vec.flatten_obs(obs))
         action = algo.act(state, epsilon, rng)
         # Активные слоты — те, что действительно ждут действия. Действия
         # неактивных слотов среда игнорирует, но записывать их переходы нельзя.
         acted = vec.step(action[:, None].astype(np.int32))
 
-        batch = _build_batch(state, action, acted, algo.encoder)
+        batch = _build_batch(state, action, acted, algo.encoder, vec.flatten_obs)
         metrics = algo.update(batch)
         result.transitions += int(batch.state.size)
 
@@ -306,6 +306,7 @@ def _build_batch(
     action: np.ndarray,
     result: StepResult,
     encoder: "StateEncoder | None" = None,
+    flatten: Callable[[list[np.ndarray]], np.ndarray] | None = None,
 ) -> Transition:
     """Собирает батч переходов из результата шага векторизованной среды.
 
@@ -321,7 +322,8 @@ def _build_batch(
         return Transition(empty_i, empty_i, np.array([]), empty_i, np.array([], dtype=bool),
                           np.array([], dtype=bool))
 
-    next_obs = np.where(done[:, None], result.final_obs[0], result.obs[0])
+    flatten = flatten or (lambda obs: obs[0])
+    next_obs = np.where(done[:, None], flatten(result.final_obs), flatten(result.obs))
     next_state = (
         np.argmax(next_obs, axis=1).astype(np.int64) if encoder is None else encoder.index(next_obs)
     )

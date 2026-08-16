@@ -38,6 +38,7 @@ from labrl.export.onnx_export import (
     MODEL_EXPORT_VERSION,
     ONNX_OPSET,
     MLAgentsPolicyWrapper,
+    _concat_obs as _DEFAULT_COMBINER,
     _HasActionSpec,
     _module_device,
     contract_input_names,
@@ -96,6 +97,7 @@ def verify_onnx_model(
     sample_obs: Sequence[np.ndarray] | None = None,
     memory_size: int = 0,
     strategy: str = "greedy",
+    obs_combiner=_DEFAULT_COMBINER,
 ) -> VerificationResult:
     """Полная проверка экспортированной модели.
 
@@ -214,7 +216,8 @@ def verify_onnx_model(
         original_device = _module_device(policy)
         policy.to("cpu")
         try:
-            wrapper = MLAgentsPolicyWrapper(policy, action_spec, memory_size, strategy).eval()
+            wrapper = MLAgentsPolicyWrapper(
+                policy, action_spec, memory_size, strategy, obs_combiner).eval()
             torch_inputs = [torch.from_numpy(feed64[name]) for name in _forward_arg_names(len(obs_shapes))]
             with torch.no_grad():
                 torch_out = wrapper(*torch_inputs)

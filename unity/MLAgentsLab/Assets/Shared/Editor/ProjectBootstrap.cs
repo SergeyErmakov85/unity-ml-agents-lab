@@ -58,7 +58,11 @@ public static class ProjectBootstrap
         GraphicsSettings.defaultRenderPipeline = pipeline;
         QualitySettings.renderPipeline = pipeline;
 
-        foreach (var tag in new[] { "agent", "goal", "trap", "wall" })
+        // Теги — часть контракта сцены: по ним работают RayPerceptionSensor
+        // (список Detectable Tags) и проверки SceneValidator. Добавление тега
+        // здесь и в SceneValidator.RequiredTags — единственный способ завести
+        // новый: RayPerceptionSensor молча не увидит несуществующий тег.
+        foreach (var tag in new[] { "agent", "goal", "trap", "wall", "obstacle" })
         {
             if (System.Array.IndexOf(InternalEditorUtility.tags, tag) < 0)
                 InternalEditorUtility.AddTag(tag);

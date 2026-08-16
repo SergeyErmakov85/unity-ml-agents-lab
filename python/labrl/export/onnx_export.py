@@ -110,16 +110,18 @@ def _concat_obs(obs: Sequence[torch.Tensor]) -> torch.Tensor:
     """Сборка нескольких векторных сенсоров в один вход политики.
 
     Порядок конкатенации — порядок сенсоров в Unity, он же порядок ``obs_i``.
-    Визуальные наблюдения (4-D тензоры) этой функцией не поддерживаются:
-    для них политика должна принимать список тензоров, что появится вместе
-    с первой средой с камерой.
+    Многомерные наблюдения (сетка, картинка) этой функцией не поддерживаются:
+    их нельзя осмысленно приклеить к вектору, не решив сначала, чем они
+    обрабатываются. Для таких сред политика принимает наблюдения
+    **раздельно** — передайте ``obs_combiner=None``.
     """
     if len(obs) == 1:
         return obs[0]
     if any(t.dim() != 2 for t in obs):
         raise NotImplementedError(
             "конкатенация по умолчанию рассчитана на векторные сенсоры (B, d); "
-            "для визуальных наблюдений передайте свой obs_combiner"
+            "для многомерных наблюдений передайте obs_combiner=None и политику, "
+            "принимающую наблюдения отдельными аргументами"
         )
     return torch.cat(list(obs), dim=1)
 
@@ -140,7 +142,20 @@ class MLAgentsPolicyWrapper(nn.Module):
             ``greedy`` — argmax (политика DQN и производных: стохастика живёт
             в ε-жадности на стороне Python, а не в графе);
             ``categorical`` — сэмплирование из softmax (policy-gradient методы).
-        obs_combiner: как склеить наблюдения нескольких сенсоров в вход политики.
+        obs_combiner: как склеить наблюдения нескольких сенсоров в вход
+            политики. ``None`` — не склеивать: политика получит наблюдения
+            отдельными аргументами в порядке ``obs_0, obs_1, …``. Так работают
+            среды с сеточным или визуальным наблюдением (`E05_FoodCollector`).
+
+    Что должна возвращать ``policy``:
+
+    * только непрерывные действия — тензор ``(B, continuous_size)``;
+    * только дискретные — тензор ``(B, sum(discrete_branches))``;
+    * **гибрид** — кортеж ``(среднее, логиты)`` из двух тензоров.
+
+    Гибридное пространство поддерживается контрактом ML-Agents напрямую:
+    в графе просто присутствуют обе группы выходов
+    (см. :func:`contract_output_names`).
 
     Замечание про нормализацию (требование 10.7): если политика нормализует
     наблюдения, нормализация обязана быть частью ``policy`` — то есть попасть
@@ -153,7 +168,7 @@ class MLAgentsPolicyWrapper(nn.Module):
         action_spec: _HasActionSpec,
         memory_size: int = 0,
         strategy: str = "greedy",
-        obs_combiner: Callable[[Sequence[torch.Tensor]], torch.Tensor] = _concat_obs,
+        obs_combiner: Callable[[Sequence[torch.Tensor]], torch.Tensor] | None = _concat_obs,
     ) -> None:
         super().__init__()
         if memory_size != 0:
@@ -163,10 +178,6 @@ class MLAgentsPolicyWrapper(nn.Module):
             )
         if strategy not in ("greedy", "categorical"):
             raise ValueError(f"strategy должна быть greedy|categorical, получено {strategy!r}")
-        if action_spec.continuous_size > 0 and len(action_spec.discrete_branches) > 0:
-            raise NotImplementedError(
-                "гибридное пространство действий (continuous + discrete) не поддерживается"
-            )
 
         self.policy = policy
         self.continuous_size = int(action_spec.continuous_size)
@@ -230,11 +241,25 @@ class MLAgentsPolicyWrapper(nn.Module):
         obs = inputs[:-2]
         action_masks = inputs[-2]
 
-        net_out = self.policy(self.obs_combiner(obs))
+        net_out = (self.policy(*obs) if self.obs_combiner is None
+                   else self.policy(self.obs_combiner(obs)))
+
+        # Гибрид: политика возвращает пару (среднее, логиты). В остальных
+        # случаях — один тензор, и он же играет обе роли.
+        if self.continuous_size > 0 and self.num_branches > 0:
+            if not isinstance(net_out, (tuple, list)) or len(net_out) != 2:
+                raise ValueError(
+                    "для гибридного пространства действий политика обязана возвращать "
+                    "кортеж (среднее, логиты); получено " + type(net_out).__name__
+                )
+            continuous_out, discrete_out = net_out
+        else:
+            continuous_out = discrete_out = net_out
+
         outputs: list[torch.Tensor] = [self.version_number, self.memory_size_vector]
 
         if self.continuous_size > 0:
-            clipped = torch.clamp(net_out, -CONTINUOUS_CLIP, CONTINUOUS_CLIP) / CONTINUOUS_CLIP
+            clipped = torch.clamp(continuous_out, -CONTINUOUS_CLIP, CONTINUOUS_CLIP) / CONTINUOUS_CLIP
             # Детерминированный выход — среднее политики; стохастический для
             # непрерывного случая формируется алгоритмом (шум добавляется в
             # Python при сборе опыта), поэтому в графе они совпадают.
@@ -244,7 +269,7 @@ class MLAgentsPolicyWrapper(nn.Module):
             masked = [
                 self._apply_mask(bl, bm)
                 for bl, bm in zip(
-                    self._split_branches(net_out),
+                    self._split_branches(discrete_out),
                     torch.split(action_masks, list(self.discrete_branches), dim=1),
                 )
             ]
@@ -272,6 +297,7 @@ def export_policy_to_onnx(
     output_path: str | Path,
     memory_size: int = 0,
     strategy: str = "greedy",
+    obs_combiner: Callable[[Sequence[torch.Tensor]], torch.Tensor] | None = _concat_obs,
 ) -> Path:
     """Экспортирует политику в ONNX по контракту ML-Agents.
 
@@ -284,6 +310,8 @@ def export_policy_to_onnx(
         memory_size: размер рекуррентной памяти (сейчас поддерживается только 0).
         strategy: ``greedy`` для DQN-подобных, ``categorical`` для
             policy-gradient методов.
+        obs_combiner: как политика получает наблюдения нескольких сенсоров.
+            ``None`` — отдельными аргументами (среды с сеточным наблюдением).
 
     Returns:
         Путь к записанному файлу.
@@ -299,7 +327,7 @@ def export_policy_to_onnx(
     # обучение после экспорта продолжается там же, где шло.
     original_device = _module_device(policy)
     policy.to("cpu")
-    wrapper = MLAgentsPolicyWrapper(policy, action_spec, memory_size, strategy).eval()
+    wrapper = MLAgentsPolicyWrapper(policy, action_spec, memory_size, strategy, obs_combiner).eval()
 
     dummy_obs = tuple(torch.zeros((1, *shape), dtype=torch.float32) for shape in obs_shapes)
     dummy_masks = torch.ones((1, max(wrapper.mask_size, 0)), dtype=torch.float32)

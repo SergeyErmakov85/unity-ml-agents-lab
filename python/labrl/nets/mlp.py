@@ -82,6 +82,31 @@ class MLPPolicyNetwork(nn.Module):
         return self.body(obs)
 
 
+class MLPContinuousQNetwork(nn.Module):
+    """Критик непрерывного управления: ``(obs, action) -> Q`` формы ``(B,)``.
+
+    Отличие от :class:`MLPQNetwork` принципиальное. При дискретных действиях
+    сеть выдаёт Q сразу для всех действий, и `argmax` берётся перебором.
+    В непрерывном пространстве перебора нет, поэтому действие подаётся
+    **на вход** вместе с наблюдением, а выход — одно число.
+    """
+
+    def __init__(
+        self,
+        obs_dim: int,
+        action_dim: int,
+        hidden_sizes: Sequence[int] = (256, 256),
+        activation: str = "relu",
+    ) -> None:
+        super().__init__()
+        self.obs_dim = obs_dim
+        self.action_dim = action_dim
+        self.body = build_mlp(obs_dim + action_dim, 1, hidden_sizes, activation)
+
+    def forward(self, obs: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
+        return self.body(torch.cat([obs, action], dim=-1)).squeeze(-1)
+
+
 class MLPValueNetwork(nn.Module):
     """Критик: ``obs (B, obs_dim) -> V (B, 1)``."""
 
