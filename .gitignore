@@ -107,3 +107,12 @@ __pycache__/
 venv/
 results/
 *.onnx.meta
+
+# Локальные (машинозависимые) настройки Unity-пакетов
+/[Pp]roject[Ss]ettings/Packages/
+
+# Python: артефакты сборки и кэши инструментов
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
