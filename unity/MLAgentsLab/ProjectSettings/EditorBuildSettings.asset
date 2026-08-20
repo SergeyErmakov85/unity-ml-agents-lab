@@ -20,5 +20,26 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/Envs/E04_BallBalance/Scenes/E04_BallBalance.unity
     guid: 70e3a02deee56ee459f0d4f4e906ebe4
+  - enabled: 1
+    path: Assets/Envs/E05_FoodCollector/Scenes/E05_FoodCollector.unity
+    guid: f2b159c6d9899a849adb9c267a71f3b8
+  - enabled: 1
+    path: Assets/Envs/E06_Hunter3D/Scenes/E06_Hunter3D.unity
+    guid: 9ef2cf74e09a7fb49934ed90983bb6fc
+  - enabled: 1
+    path: Assets/Envs/E07_RacingCar/Scenes/E07_RacingCar.unity
+    guid: a36de380be6a97746bf649fd5e747b32
+  - enabled: 1
+    path: Assets/Envs/E08_SoccerArena/Scenes/E08_SoccerArena.unity
+    guid: 0bf309859bc9ed04199056dea524c876
+  - enabled: 1
+    path: Assets/Envs/E09_CurriculumMaze/Scenes/E09_CurriculumMaze.unity
+    guid: 19ff327b57180ee4697a520c7e4095e5
+  - enabled: 1
+    path: Assets/Envs/E10_Imitation/Scenes/E10_Imitation.unity
+    guid: 393030815ae5c034691f4e3d7d311652
+  - enabled: 1
+    path: Assets/Envs/E11_Research/Scenes/E11_Research.unity
+    guid: dd0acb56bde13d14bb63a52c43629f21
   m_configObjects:
     com.unity.dt.app-ui: {fileID: 11400000, guid: 1b1c20d82303e4b5781c3ef50ac1449f, type: 2}

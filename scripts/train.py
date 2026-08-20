@@ -459,7 +459,7 @@ def run_seed_selfplay(cfg: ExperimentConfig, seed: int, quick: bool, worker_id: 
         logger.close()
 
         save_checkpoint(run.ckpt / "final.pt", algo.state_dict())
-        onnx_path = _export_selfplay(cfg, algo, run.onnx / "policy.onnx", env)
+        onnx_path = _export_selfplay(cfg, algo, run.onnx / "policy.onnx", env, quick=quick)
 
         achieved = (result.last_eval_success
                     if "Success Rate" in cfg.success_criteria.metric
@@ -486,7 +486,8 @@ def run_seed_selfplay(cfg: ExperimentConfig, seed: int, quick: bool, worker_id: 
         handle.close()
 
 
-def _export_selfplay(cfg: ExperimentConfig, algo, dest: Path, env: TeamUnityEnv) -> Path | None:
+def _export_selfplay(cfg: ExperimentConfig, algo, dest: Path, env: TeamUnityEnv,
+                     quick: bool = False) -> Path | None:
     """Экспорт актора MA-POCA. Отличается от :func:`_export` только источником
     наблюдений для проверки числового паритета."""
     if not cfg.export.get("verify", True) and not cfg.export.get("onnx_path"):
@@ -506,6 +507,16 @@ def _export_selfplay(cfg: ExperimentConfig, algo, dest: Path, env: TeamUnityEnv)
                                    obs_combiner=_DEFAULT_COMBINER)
         print(result.report(), flush=True)
         result.raise_if_failed()
+
+    if quick:
+        # Быстрый прогон — смоук-тест конвейера, а не обучение. Копировать
+        # его модель в проект Unity нельзя: она затрёт модель полного
+        # обучения, и «проверка инференса» будет мерить смоук-версию
+        # (docs/07_TROUBLESHOOTING.md, T-14). Ноутбуки эту защиту имеют
+        # с самого начала; здесь её не было.
+        print(f"быстрый прогон: модель в проект Unity НЕ копируется (T-14); "
+              f"экспорт остался в {path}", flush=True)
+        return path
 
     final = resolve_path(cfg.export["onnx_path"])
     final.parent.mkdir(parents=True, exist_ok=True)
@@ -890,7 +901,7 @@ def run_seed(cfg: ExperimentConfig, seed: int, quick: bool, worker_id: int = 0) 
 
         save_checkpoint(run.ckpt / "final.pt", algo.state_dict())
 
-        onnx_path = _export(cfg, algo, run.onnx / "policy.onnx", vec)
+        onnx_path = _export(cfg, algo, run.onnx / "policy.onnx", vec, quick=quick)
 
         # Приёмочное число выбирается по метрике из success_criteria: в средах
         # с формированием награды сравнивать порог с сырой наградой нельзя
@@ -938,7 +949,8 @@ def run_seed(cfg: ExperimentConfig, seed: int, quick: bool, worker_id: int = 0) 
         handle.close()
 
 
-def _export(cfg: ExperimentConfig, algo, dest: Path, vec: VecUnityEnv) -> Path | None:
+def _export(cfg: ExperimentConfig, algo, dest: Path, vec: VecUnityEnv,
+            quick: bool = False) -> Path | None:
     """Экспортирует политику в ONNX и **блокирует** приёмку при провале проверки."""
     if not cfg.export.get("verify", True) and not cfg.export.get("onnx_path"):
         return None
@@ -962,6 +974,16 @@ def _export(cfg: ExperimentConfig, algo, dest: Path, vec: VecUnityEnv) -> Path |
                                    obs_combiner=combiner)
         print(result.report(), flush=True)
         result.raise_if_failed()
+
+    if quick:
+        # Быстрый прогон — смоук-тест конвейера, а не обучение. Копировать
+        # его модель в проект Unity нельзя: она затрёт модель полного
+        # обучения, и «проверка инференса» будет мерить смоук-версию
+        # (docs/07_TROUBLESHOOTING.md, T-14). Ноутбуки эту защиту имеют
+        # с самого начала; здесь её не было.
+        print(f"быстрый прогон: модель в проект Unity НЕ копируется (T-14); "
+              f"экспорт остался в {path}", flush=True)
+        return path
 
     final = resolve_path(cfg.export["onnx_path"])
     final.parent.mkdir(parents=True, exist_ok=True)
