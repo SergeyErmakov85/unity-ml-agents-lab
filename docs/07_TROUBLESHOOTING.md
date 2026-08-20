@@ -692,7 +692,7 @@ entropy = self.policy_net.entropy(flat_obs[present])
 **безусловно**. То есть команда
 
 ```powershell
-python scripts	rain.py --config configs\E10_Imitation__bc.yaml --seed 0 --quick
+python scripts\train.py --config configs\E10_Imitation__bc.yaml --seed 0 --quick
 ```
 
 затирала модель полного обучения смоук-версией — ровно то, от чего T-14
