@@ -26,7 +26,9 @@ sys.path.insert(0, str(REPO_ROOT / "python"))
 
 from labrl.algos.a2c import A2C, A2CConfig  # noqa: E402
 from labrl.algos.bandits import STRATEGIES, Bandit, BanditConfig  # noqa: E402
+from labrl.algos.bc import BC, BCConfig  # noqa: E402
 from labrl.algos.dqn import DQN, DQNConfig  # noqa: E402
+from labrl.algos.gail import GAIL, Discriminator, GAILConfig  # noqa: E402
 from labrl.algos.mapoca import (  # noqa: E402
     MAPOCA,
     CentralizedCritic,
@@ -38,6 +40,7 @@ from labrl.algos.ppo_discrete import PPODiscrete  # noqa: E402
 from labrl.algos.reinforce import REINFORCE, ReinforceConfig  # noqa: E402
 from labrl.algos.sac import SAC, SACConfig  # noqa: E402
 from labrl.algos.tabular.q_learning import QLearning, QLearningConfig  # noqa: E402
+from labrl.envs.demos import Demonstrations, corridor_expert, record_demonstrations  # noqa: E402
 from labrl.envs.state_encoders import BoxDiscretizer, OneHotStateEncoder  # noqa: E402
 from labrl.envs.team_env import TeamUnityEnv, team_behavior_name  # noqa: E402
 from labrl.envs.unity_env import open_unity_env  # noqa: E402
@@ -60,6 +63,12 @@ from labrl.train.bandit import BanditTrainConfig, train_bandit  # noqa: E402
 from labrl.train.dqn import DQNTrainConfig, train_dqn  # noqa: E402
 from labrl.train.onpolicy import OnPolicyTrainConfig, train_on_policy  # noqa: E402
 from labrl.train.reinforce import ReinforceTrainConfig, train_reinforce  # noqa: E402
+from labrl.train.imitation import (  # noqa: E402
+    BCTrainConfig,
+    GAILTrainConfig,
+    train_bc,
+    train_gail,
+)
 from labrl.train.curriculum import (  # noqa: E402
     build_curriculum,
     evaluate_at_difficulty,
@@ -102,10 +111,8 @@ def learning_rate_schedule(cfg: ExperimentConfig) -> Schedule:
     (docs/07_TROUBLESHOOTING.md, T-11), поэтому число здесь — сознательный выбор
     пользователя, а не значение по умолчанию.
     """
-    spec = cfg.algo["learning_rate"]
-    if isinstance(spec, dict):
-        return build_schedule(spec)
-    return ConstantSchedule(float(spec))
+    # build_schedule принимает и число, и блок (labrl.utils.schedules).
+    return build_schedule(cfg.algo["learning_rate"])
 
 
 def build_algo(cfg: ExperimentConfig, obs_dim: int, num_actions: int, seed: int = 0,
@@ -161,7 +168,26 @@ def build_algo(cfg: ExperimentConfig, obs_dim: int, num_actions: int, seed: int 
             device=device,
         )
 
-    if cfg.algo_name == "ppo_discrete":
+    if cfg.algo_name == "bc":
+        # BC — обучение с учителем: ни критика, ни ценности. Сеть та же,
+        # что у RL-методов: BC часто используют как инициализацию для них.
+        hidden = tuple(cfg.network.get("hidden_sizes", (128, 128)))
+        activation = cfg.network.get("activation", "relu")
+        return BC(
+            MultiBranchCategoricalPolicy(obs_dim, discrete_branches, hidden, activation),
+            BCConfig(
+                learning_rate=float(cfg.algo["learning_rate"]),
+                batch_size=int(cfg.algo["batch_size"]),
+                weight_decay=float(cfg.algo.get("weight_decay", 0.0)),
+                entropy_coef=float(cfg.algo.get("entropy_coef", 0.0)),
+                max_grad_norm=float(cfg.algo.get("max_grad_norm", 1.0)),
+            ),
+            device=resolve_device("auto"), seed=seed,
+        )
+
+    if cfg.algo_name in ("ppo_discrete", "gail"):
+        # GAIL обучает политику тем же PPO: новизна метода — в награде,
+        # а не в способе оптимизации (labrl.algos.gail).
         # Тот же PPO, другая политика: категориальная вместо гауссовой.
         # Правило обновления наследуется без изменений (labrl.algos.ppo_discrete).
         hidden = tuple(cfg.network.get("hidden_sizes", (256, 256)))
@@ -521,6 +547,72 @@ def _collect_team_sample_obs(env: TeamUnityEnv, count: int) -> list[np.ndarray]:
     return out
 
 
+def load_demonstrations(cfg: ExperimentConfig, vec=None) -> Demonstrations:  # noqa: ANN001
+    """Читает демонстрации с диска либо записывает их скриптовым экспертом.
+
+    Готовый набор лежит в репозитории и весит килобайты, поэтому BC
+    запускается без Unity вовсе. Запись нужна, только если файла нет
+    или пользователь хочет другой объём.
+    """
+    spec = cfg.raw.get("demonstrations")
+    if not spec:
+        raise ValueError(
+            f"конфиг {cfg.algo_name} требует блока demonstrations с путём к набору"
+        )
+
+    path = resolve_path(spec["path"])
+    if path.is_file():
+        demos = Demonstrations.load(path)
+        print(f"демонстрации загружены: {path}")
+        print(f"  {demos.describe()}", flush=True)
+        return demos
+
+    if vec is None:
+        raise FileNotFoundError(
+            f"нет файла демонстраций {path}, а среда не открыта — записать нечем"
+        )
+
+    experts = {"corridor": corridor_expert}
+    name = spec.get("expert", "corridor")
+    if name not in experts:
+        raise ValueError(f"неизвестный эксперт {name!r}; известны: {sorted(experts)}")
+
+    print(f"файла {path} нет — записываю демонстрации экспертом {name!r}…", flush=True)
+    demos = record_demonstrations(vec, experts[name], episodes=int(spec.get("episodes", 100)))
+    demos.save(path)
+    print(f"  {demos.describe()}")
+    print(f"  сохранено: {path}", flush=True)
+    return demos
+
+
+def build_gail(cfg: ExperimentConfig, vec, seed: int) -> GAIL:  # noqa: ANN001
+    """Собирает дискриминатор GAIL и подключает к нему демонстрации.
+
+    Политику собирает :func:`build_algo` как обычный `ppo_discrete`: GAIL —
+    это способ получить награду, а не способ оптимизации, и смешивать их
+    в одном объекте значило бы прятать это различие.
+    """
+    hidden = tuple(cfg.network.get("discriminator_hidden_sizes", (128, 128)))
+    activation = cfg.network.get("discriminator_activation", "tanh")
+    branches = tuple(vec.action_spec.discrete_branches)
+
+    return GAIL(
+        Discriminator(vec.single_obs_dim, branches, hidden, activation),
+        load_demonstrations(cfg, vec),
+        GAILConfig(
+            learning_rate=float(cfg.algo["discriminator_learning_rate"]),
+            batch_size=int(cfg.algo["discriminator_batch_size"]),
+            updates_per_batch=int(cfg.algo.get("discriminator_updates_per_batch", 2)),
+            label_smoothing=float(cfg.algo.get("label_smoothing", 0.1)),
+            gradient_penalty=float(cfg.algo.get("gradient_penalty", 10.0)),
+            max_grad_norm=float(cfg.algo.get("max_grad_norm", 1.0)),
+            env_reward_weight=float(cfg.algo.get("env_reward_weight", 0.0)),
+            reward_scale=float(cfg.algo.get("reward_scale", 1.0)),
+        ),
+        device=resolve_device("auto"), seed=seed,
+    )
+
+
 def run_seed(cfg: ExperimentConfig, seed: int, quick: bool, worker_id: int = 0) -> dict:
     """Один прогон обучения на одном сиде. Возвращает сводку для отчёта.
 
@@ -634,6 +726,35 @@ def run_seed(cfg: ExperimentConfig, seed: int, quick: bool, worker_id: int = 0) 
                 seed=seed, on_eval=report,
                 lr_schedule=learning_rate_schedule(cfg),
             )
+        elif cfg.algo_name == "bc":
+            # Единственный метод лаборатории, который не ходит в среду
+            # во время обучения: среда нужна только для оценки.
+            result = train_bc(
+                demos=load_demonstrations(cfg, vec), algo=algo, logger=logger, vec=vec,
+                cfg=BCTrainConfig(
+                    steps=total_steps,
+                    eval_every_steps=eval_every,
+                    eval_episodes=eval_episodes,
+                    holdout=float(cfg.raw["demonstrations"].get("holdout", 0.2)),
+                    success_rule=success_rule,
+                    success_threshold=success_threshold,
+                ),
+                seed=seed, on_eval=report,
+            )
+        elif cfg.algo_name == "gail":
+            result = train_gail(
+                vec=vec, algo=algo, gail=build_gail(cfg, vec, seed), logger=logger,
+                cfg=GAILTrainConfig(
+                    total_steps=total_steps,
+                    rollout_steps=int(cfg.algo["rollout_steps"]),
+                    eval_every_steps=eval_every,
+                    eval_episodes=eval_episodes,
+                    success_threshold=success_threshold,
+                    success_rule=success_rule,
+                ),
+                seed=seed, on_eval=report,
+                lr_schedule=learning_rate_schedule(cfg),
+            )
         elif cfg.algo_name in ("a2c", "ppo", "ppo_discrete"):
             result = train_on_policy(
                 vec=vec, algo=algo, logger=logger,
@@ -682,10 +803,13 @@ def run_seed(cfg: ExperimentConfig, seed: int, quick: bool, worker_id: int = 0) 
             {"final/eval_reward": result.last_eval_reward,
              "final/eval_success": result.last_eval_success},
         )
+        # У BC и GAIL итог другого типа (labrl.train.imitation.ImitationResult):
+        # у обучения с учителем нет «эпизодов сбора опыта».
+        episodes = len(getattr(result, "episode_returns", []))
         missing = logger.missing_required_tags()
         logger.dump_metrics(run.metrics_json, extra={
             "seed": seed,
-            "episodes": len(result.episode_returns),
+            "episodes": episodes,
             "eval_history": result.eval_history,
             "wall_time_sec": result.wall_time,
             "missing_required_tags": list(missing),
@@ -729,7 +853,7 @@ def run_seed(cfg: ExperimentConfig, seed: int, quick: bool, worker_id: int = 0) 
             "eval_success": final_success,
             "criteria_metric": cfg.success_criteria.metric,
             "achieved": achieved,
-            "episodes": len(result.episode_returns),
+            "episodes": episodes,
             "wall_time_sec": round(result.wall_time, 1),
             "missing_required_tags": list(missing),
             "onnx": str(onnx_path) if onnx_path else None,

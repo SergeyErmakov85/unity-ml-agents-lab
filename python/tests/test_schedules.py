@@ -54,3 +54,27 @@ def test_build_schedule_from_config_block():
 def test_build_schedule_rejects_unknown_type():
     with pytest.raises(ValueError, match="неизвестный тип"):
         build_schedule({"type": "cosine", "start": 1.0})
+
+
+# --- число вместо блока -------------------------------------------------
+
+
+def test_build_schedule_accepts_a_plain_number():
+    """`docs/03_CONVENTIONS.md`, §6 разрешает и число, и блок.
+
+    Без этой ветки конфиг с `epsilon: 0.0` падал с
+    `TypeError: 'float' object is not subscriptable` — и не при разборе
+    конфига, а уже после открытия среды Unity, то есть через минуту ожидания.
+    """
+    schedule = build_schedule(0.25)
+    assert schedule(0) == pytest.approx(0.25)
+    assert schedule(1_000_000) == pytest.approx(0.25)
+
+
+def test_build_schedule_accepts_int():
+    assert build_schedule(1)(42) == pytest.approx(1.0)
+
+
+def test_build_schedule_rejects_nonsense():
+    with pytest.raises(ValueError, match="числом или блоком"):
+        build_schedule("linear")

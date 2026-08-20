@@ -130,6 +130,12 @@ class PPO:
             inspect.signature(self.policy_net.entropy).parameters
         )
 
+        # log σ есть только у гауссовой политики: у категориальной ширина
+        # разведки выражается энтропией, а не отдельным параметром. Тег
+        # `Custom/Log Std` при этом остаётся в схеме и пишется нулём —
+        # состав метрик не должен зависеть от типа политики.
+        self._has_log_std = hasattr(self.policy_net, "clamped_log_std")
+
     # --- взаимодействие со средой ---------------------------------------
 
     @torch.no_grad()
@@ -240,7 +246,8 @@ class PPO:
                     "entropy": float(entropy.item()),
                     "approx_kl": float(approx_kl.item()),
                     "grad_norm": float(grad_norm),
-                    "log_std": float(self.policy_net.clamped_log_std().mean().item()),
+                    "log_std": (float(self.policy_net.clamped_log_std().mean().item())
+                                if self._has_log_std else 0.0),
                 }
 
                 if self.cfg.target_kl > 0.0 and stats["approx_kl"] > self.cfg.target_kl:

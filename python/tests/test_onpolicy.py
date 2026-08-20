@@ -256,3 +256,78 @@ def test_state_dict_round_trip(kind):
 
     obs = np.random.default_rng(0).normal(size=(8, OBS_DIM)).astype(np.float32)
     np.testing.assert_allclose(restored.deterministic_action(obs), algo.deterministic_action(obs))
+
+
+# --- PPO с категориальной политикой -------------------------------------
+
+
+def test_ppo_discrete_update_runs_without_gaussian_attributes():
+    """PPO обязан обновляться и с категориальной политикой.
+
+    Ошибка найдена запуском GAIL: `update()` безусловно читал
+    `clamped_log_std()`, которого у категориальной политики нет, и падал
+    на ПЕРВОМ же обновлении — то есть уже после минуты подключения к Unity.
+    Тот же путь ломал и `E09_CurriculumMaze`.
+    """
+    import numpy as np
+    import torch
+
+    from labrl.algos.ppo import PPOConfig
+    from labrl.algos.ppo_discrete import PPODiscrete
+    from labrl.buffers.rollout import RolloutBuffer
+    from labrl.nets.categorical_policy import MultiBranchCategoricalPolicy
+    from labrl.nets.mlp import MLPValueNetwork
+
+    torch.manual_seed(0)
+    obs_dim, branches = 6, (4,)
+    algo = PPODiscrete(
+        MultiBranchCategoricalPolicy(obs_dim, branches, hidden_sizes=(16,)),
+        MLPValueNetwork(obs_dim, (16,), "relu"),
+        PPOConfig(epochs=1, minibatch_size=8),
+        seed=0,
+    )
+
+    rng = np.random.default_rng(0)
+    buffer = RolloutBuffer(num_envs=1, gamma=0.99, gae_lambda=0.95)
+    for t in range(16):
+        buffer.add(
+            slot=0,
+            obs=rng.normal(size=obs_dim).astype(np.float32),
+            action=rng.integers(0, 4, size=1).astype(np.float32),
+            log_prob=float(rng.normal()),
+            value=float(rng.normal()),
+            reward=float(rng.normal()),
+            terminated=t == 15,
+            truncated=False,
+        )
+
+    stats = algo.update(buffer.compute(np.zeros(1)))
+    # Тег остаётся в схеме и пишется нулём: состав метрик не должен
+    # зависеть от типа политики.
+    assert stats["log_std"] == 0.0
+    assert np.isfinite(stats["policy_loss"])
+    assert np.isfinite(stats["entropy"])
+
+
+def test_ppo_discrete_act_returns_integer_actions():
+    import numpy as np
+    import torch
+
+    from labrl.algos.ppo import PPOConfig
+    from labrl.algos.ppo_discrete import PPODiscrete
+    from labrl.nets.categorical_policy import MultiBranchCategoricalPolicy
+    from labrl.nets.mlp import MLPValueNetwork
+
+    torch.manual_seed(0)
+    algo = PPODiscrete(
+        MultiBranchCategoricalPolicy(6, (4,), hidden_sizes=(16,)),
+        MLPValueNetwork(6, (16,), "relu"),
+        PPOConfig(),
+        seed=0,
+    )
+    out = algo.act(np.zeros((5, 6), dtype=np.float32), np.random.default_rng(0))
+    assert out.env_action.shape == (5, 1)
+    assert out.env_action.dtype == np.int64
+    assert out.env_action.min() >= 0 and out.env_action.max() < 4
+    # «Сырое» и «приведённое» действие у дискретного случая совпадают.
+    assert np.array_equal(out.env_action, out.raw_action)
