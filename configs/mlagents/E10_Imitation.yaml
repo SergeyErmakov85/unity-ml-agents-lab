@@ -1,0 +1,55 @@
+# Эталонный конфиг ШТАТНОГО тренера ML-Agents для E10_Imitation (п. 12.5).
+#
+# Он существует не для того, чтобы им пользовались вместо labrl, а чтобы
+# при подозрении на ошибку было с чем сравнить: если штатный тренер учится,
+# а наш — нет, дело в нашем коде; если не учится ни один — дело в среде.
+#
+# Запуск (из корня репозитория, при активированном python/.venv):
+#   mlagents-learn configs/mlagents/E10_Imitation.yaml \
+#     --env=builds/E10_Imitation/E10_Imitation.exe --run-id=E10_gail_ref
+#
+# Ключ behaviors ОБЯЗАН содержать идентификатор среды: иначе тренер
+# не подключится к сцене (правило 5.3).
+#
+# Штатный аналог нашего GAIL — сигнал награды `gail` поверх PPO.
+# Behavioral Cloning у штатного тренера задаётся отдельным блоком
+# `behavioral_cloning`; здесь он не включён, чтобы эталон соответствовал
+# configs/E10_Imitation__gail.yaml, а не смеси двух методов.
+
+behaviors:
+  E10_Imitation:
+    trainer_type: ppo
+
+    hyperparameters:
+      batch_size: 1024
+      buffer_size: 10240
+      learning_rate: 0.0003
+      beta: 0.03          # у нас — entropy_coef
+      epsilon: 0.2         # у нас — clip_range
+      lambd: 0.95          # у нас — gae_lambda
+      num_epoch: 3
+      learning_rate_schedule: linear
+
+    network_settings:
+      normalize: false
+      hidden_units: 128
+      num_layers: 2
+      vis_encode_type: simple
+
+    reward_signals:
+      extrinsic:
+        gamma: 0.99
+        strength: 1.0
+      gail:
+        gamma: 0.99
+        strength: 0.8
+        # Демонстрации Unity в формате .demo. Наш конвейер использует
+        # data/demos/E10_Imitation_expert.npz — тот же эксперт, другой формат.
+        # Чтобы получить .demo, повесьте DemonstrationRecorder на агента
+        # и пройдите коридор руками в режиме Heuristic Only.
+        demo_path: demos/E10_Imitation.demo
+
+    keep_checkpoints: 5
+    max_steps: 2000000
+    time_horizon: 120
+    summary_freq: 10000

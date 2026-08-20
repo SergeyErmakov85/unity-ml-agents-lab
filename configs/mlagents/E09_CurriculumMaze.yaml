@@ -1,0 +1,79 @@
+# Эталонный конфиг ШТАТНОГО тренера ML-Agents для E09_CurriculumMaze (п. 12.5).
+#
+# Он существует не для того, чтобы им пользовались вместо labrl, а чтобы
+# при подозрении на ошибку было с чем сравнить: если штатный тренер учится,
+# а наш — нет, дело в нашем коде; если не учится ни один — дело в среде.
+#
+# Запуск (из корня репозитория, при активированном python/.venv):
+#   mlagents-learn configs/mlagents/E09_CurriculumMaze.yaml \
+#     --env=builds/E09_CurriculumMaze/E09_CurriculumMaze.exe --run-id=E09_ppo_ref
+#
+# Ключ behaviors ОБЯЗАН содержать идентификатор среды: иначе тренер
+# не подключится к сцене (правило 5.3).
+#
+# Учебный план у штатного тренера задаётся отдельным блоком environment_parameters
+# с lesson-ами; ниже он приведён как есть, но обратите внимание: наш
+# labrl.train.curriculum переводит урок по доле успехов, а штатный —
+# по сигналу, указанному в completion_criteria. Смысл тот же, ключи разные.
+
+behaviors:
+  E09_CurriculumMaze:
+    trainer_type: ppo
+
+    hyperparameters:
+      batch_size: 1024
+      buffer_size: 10240
+      learning_rate: 0.0003
+      beta: 0.01          # у нас — entropy_coef
+      epsilon: 0.2         # у нас — clip_range
+      lambd: 0.95          # у нас — gae_lambda
+      num_epoch: 3
+      learning_rate_schedule: linear
+
+    network_settings:
+      normalize: false
+      hidden_units: 256
+      num_layers: 2
+      vis_encode_type: simple
+
+    reward_signals:
+      extrinsic:
+        gamma: 0.99
+        strength: 1.0
+
+    keep_checkpoints: 5
+    max_steps: 3000000
+    time_horizon: 150
+    summary_freq: 10000
+
+# Учебный план штатного тренера. Наш аналог — блок curriculum
+# в configs/E09_CurriculumMaze__ppo_curriculum.yaml.
+environment_parameters:
+  difficulty:
+    curriculum:
+      - name: Lesson0
+        completion_criteria:
+          measure: progress
+          behavior: E09_CurriculumMaze
+          signal_smoothing: true
+          min_lesson_length: 100
+          threshold: 0.2
+        value: 0.0
+      - name: Lesson1
+        completion_criteria:
+          measure: progress
+          behavior: E09_CurriculumMaze
+          signal_smoothing: true
+          min_lesson_length: 100
+          threshold: 0.4
+        value: 0.33
+      - name: Lesson2
+        completion_criteria:
+          measure: progress
+          behavior: E09_CurriculumMaze
+          signal_smoothing: true
+          min_lesson_length: 100
+          threshold: 0.6
+        value: 0.67
+      - name: Lesson3
+        value: 1.0
