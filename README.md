@@ -63,6 +63,13 @@ $py = ".\python\.venv\Scripts\python.exe"
 & $py scripts\check_inference.py --config configs\E08_SoccerArena__mapoca.yaml --python-reward <оценка>
 ```
 
+Проверить **все** конвейеры разом, не обучая ничего по-настоящему:
+
+```powershell
+& $py scripts\smoke_all.py --list     # что будет запущено и где нет билда
+& $py scripts\smoke_all.py            # все 18 конфигов, сокращённый бюджет
+```
+
 Конфиги всех сред — в [`configs/`](configs/); у среды с несколькими методами
 их несколько (например `E10_Imitation__bc.yaml`, `__gail.yaml`,
 `__ppo_discrete.yaml` — для сравнения методов на одной задаче).

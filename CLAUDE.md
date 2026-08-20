@@ -62,6 +62,7 @@ $py = ".\python\.venv\Scripts\python.exe"
 & $py scripts/build_env.py --validate-only             # SceneValidator over all environments
 & $py scripts/train.py --config configs/<cfg> --quick  # pipeline smoke test, minutes
 & $py scripts/train.py --config configs/<cfg> --all-seeds   # full run, 3 seeds
+& $py scripts/smoke_all.py                             # smoke every config, one command
 & $py scripts/results.py --write docs/RESULTS.md       # regenerate the summary table
 .\scripts\tb.ps1                                       # TensorBoard over results/
 ```

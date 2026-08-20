@@ -486,6 +486,9 @@ A-21 (пакеты, поднятые редактором), A-22 (удалён `
 ```powershell
 $py = ".\python\.venv\Scripts\python.exe"
 
+# 0. Сначала убедиться, что все конвейеры живы (ничего не обучает)
+& $py scripts\smoke_all.py
+
 # 1. Обучить четыре новые среды (каждая — на трёх сидах)
 & $py scripts\train.py --config configs\E08_SoccerArena__mapoca.yaml --all-seeds
 & $py scripts\train.py --config configs\E09_CurriculumMaze__ppo_curriculum.yaml --all-seeds
