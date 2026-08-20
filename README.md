@@ -100,7 +100,9 @@ unity-ml-agents-lab/
 │   └── .venv/                      # изолированное окружение (Python 3.10.x)
 ├── notebooks/                      # по одному ноутбуку на пример
 ├── configs/                        # наши конфиги + configs/mlagents/ (эталон штатного тренера)
-├── scripts/                        # build_env.py, verify_onnx.py, tb.ps1
+├── scripts/                        # build_env.py, train.py, smoke_all.py, check_inference.py,
+│                                   # results.py, sync_models.py, verify_onnx.py, tb.ps1
+├── data/demos/                     # демонстрации эксперта для E10 (8 КБ, коммитятся намеренно)
 ├── builds/                         # headless-сборки (в .gitignore)
 ├── results/                        # прогоны обучения (в .gitignore)
 └── _archive/                       # вытесненные материалы; безвозвратно ничего не удаляется
