@@ -31,7 +31,7 @@
 | [`E04_BallBalance`](docs/envs/E04_BallBalance.md) | удержать шар на платформе | Continuous 2 | A2C, PPO | 2.3, проект-1 | **DONE** |
 | [`E05_FoodCollector`](docs/envs/E05_FoodCollector.md) | собрать еду, обходя вредную | гибридные | REINFORCE + baseline | 2.1, проект-2 | **DONE** |
 | [`E06_Hunter3D`](docs/envs/E06_Hunter3D.md) | догнать цель, обходя препятствия | Continuous 2 | PPO + GAE + PBRS | 2.2, 2.4, проект-2 | **DONE** |
-| [`E07_RacingCar`](docs/envs/E07_RacingCar.md) | проехать круг по трассе | Continuous 2 | SAC | 3.1, проект-3 | **DONE** |
+| [`E07_RacingCar`](docs/envs/E07_RacingCar.md) | проехать круг по трассе | Continuous 2 | SAC; **подбор гиперпараметров** | 3.1, 3.6, проект-3 | **DONE** |
 | [`E08_SoccerArena`](docs/envs/E08_SoccerArena.md) | 2 × 2 футбол | Discrete 3×3×3 | **MA-POCA + Self-Play** | 3.2 | READY |
 | [`E09_CurriculumMaze`](docs/envs/E09_CurriculumMaze.md) | лабиринт растущей сложности | Discrete 1×4 | **PPO + Curriculum + DR** | 3.3 | READY |
 | [`E10_Imitation`](docs/envs/E10_Imitation.md) | коридор, где RL буксует | Discrete 1×4 | **BC, GAIL** | 3.4 | READY |
