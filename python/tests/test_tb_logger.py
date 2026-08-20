@@ -61,3 +61,38 @@ def test_run_dir_writes_env_info(tmp_path):
     run.write_env_info({"obs_shapes": [[25]], "mode": "editor"})
 
     assert json.loads(run.env_info_json.read_text(encoding="utf-8"))["mode"] == "editor"
+
+
+# --- режим без записи на диск -------------------------------------------
+
+
+def test_logger_without_directory_writes_nothing_but_counts_tags():
+    """`TBLogger(None)` нужен подбору гиперпараметров: десятки коротких
+    прогонов не должны засорять `results/`.
+
+    Учёт тегов и последних значений при этом обязан продолжать работать —
+    иначе `missing_required_tags` и `dump_metrics` теряют смысл.
+    """
+    logger = TBLogger(None)
+    logger.scalar(Tags.CUMULATIVE_REWARD, 1.5, 10)
+    logger.custom("Something", 0.25, 10)
+    logger.text("note", "текст")
+    logger.hparams({"lr": 1e-3}, {"final": 1.0})
+
+    assert logger.log_dir is None
+    assert Tags.CUMULATIVE_REWARD in logger.seen_tags
+    assert Tags.CUMULATIVE_REWARD not in logger.missing_required_tags()
+    logger.flush()
+    logger.close()
+
+
+def test_logger_without_directory_still_dumps_metrics(tmp_path):
+    logger = TBLogger(None)
+    logger.scalar(Tags.EVAL_MEAN_REWARD, 0.75, 1)
+    path = logger.dump_metrics(tmp_path / "metrics.json", extra={"seed": 0})
+    logger.close()
+
+    import json
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["last_values"][Tags.EVAL_MEAN_REWARD] == 0.75
+    assert payload["seed"] == 0

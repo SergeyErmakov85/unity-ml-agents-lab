@@ -42,7 +42,7 @@
 пересобирается. Так сцена воспроизводима и её изменения читаемы в diff.
 
 ```powershell
-& "C:\Program Files\Unity\Hub\Editor\6000.5.8f1\Editor\Unity.exe" `
+& "C:\Program Files\Unity\Hub\Editor\6000.5.4f1\Editor\Unity.exe" `
   -batchmode -quit -projectPath C:\unity-ml-agents-lab\unity\MLAgentsLab `
   -executeMethod GridWorldSetup.BuildScene -logFile build.log
 ```

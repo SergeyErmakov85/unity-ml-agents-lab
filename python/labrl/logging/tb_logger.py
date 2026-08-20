@@ -73,17 +73,29 @@ class TBLogger:
     в ``metrics.json``.
     """
 
-    def __init__(self, log_dir: str | Path) -> None:
-        self.log_dir = Path(log_dir)
-        self.log_dir.mkdir(parents=True, exist_ok=True)
-        self._writer = SummaryWriter(log_dir=str(self.log_dir))
+    def __init__(self, log_dir: str | Path | None) -> None:
+        """Args: ``log_dir`` — каталог логов; ``None`` — не писать на диск.
+
+        Режим ``None`` нужен подбору гиперпараметров (`labrl.eval.hpo`):
+        там десятки коротких прогонов, и интересен один итог, а не кривые
+        каждой конфигурации. Учёт тегов и последних значений при этом
+        продолжает работать, поэтому `missing_required_tags` и
+        `dump_metrics` остаются осмысленными.
+        """
+        self.log_dir = Path(log_dir) if log_dir is not None else None
+        if self.log_dir is not None:
+            self.log_dir.mkdir(parents=True, exist_ok=True)
+            self._writer = SummaryWriter(log_dir=str(self.log_dir))
+        else:
+            self._writer = None
         self._seen_tags: set[str] = set()
         self._last: dict[str, float] = {}
 
     # --- запись ---------------------------------------------------------
 
     def scalar(self, tag: str, value: float, step: int) -> None:
-        self._writer.add_scalar(tag, float(value), global_step=step)
+        if self._writer is not None:
+            self._writer.add_scalar(tag, float(value), global_step=step)
         self._seen_tags.add(tag)
         self._last[tag] = float(value)
 
@@ -100,7 +112,8 @@ class TBLogger:
         self.scalars(values, step, prefix=Tags.ENV_NS)
 
     def text(self, tag: str, body: str, step: int = 0) -> None:
-        self._writer.add_text(tag, body, global_step=step)
+        if self._writer is not None:
+            self._writer.add_text(tag, body, global_step=step)
 
     def hparams(self, hparams: Mapping[str, Any], metrics: Mapping[str, float]) -> None:
         """Гиперпараметры прогона (требование 11.5).
@@ -108,6 +121,8 @@ class TBLogger:
         ``add_hparams`` принимает только скаляры и строки, поэтому вложенные
         структуры сериализуются в JSON-строку.
         """
+        if self._writer is None:
+            return
         flat = {k: (v if isinstance(v, (int, float, str, bool)) else json.dumps(v, ensure_ascii=False))
                 for k, v in hparams.items()}
         self._writer.add_hparams(flat, dict(metrics))
@@ -134,9 +149,12 @@ class TBLogger:
         return out
 
     def flush(self) -> None:
-        self._writer.flush()
+        if self._writer is not None:
+            self._writer.flush()
 
     def close(self) -> None:
+        if self._writer is None:
+            return
         self._writer.flush()
         self._writer.close()
 

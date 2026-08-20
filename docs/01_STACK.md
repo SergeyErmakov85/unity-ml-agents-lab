@@ -341,8 +341,8 @@ No broken requirements found.
 
 | Что | Значение | Источник |
 |---|---|---|
-| Установленный редактор | **6000.5.8f1** (`5cb7df797b7d`) | `C:\Program Files\Unity\Hub\Editor\6000.5.8f1` |
-| `ProjectVersion.txt` | приведён к 6000.5.8f1 | допущение A-20 |
+| Установленный редактор | **6000.5.4f1** (`5cb7df797b7d`) | `C:\Program Files\Unity\Hub\Editor\6000.5.4f1` |
+| `ProjectVersion.txt` | приведён к 6000.5.4f1 | допущение A-20 |
 | `com.unity.ml-agents` | 4.0.3 — **без изменений** | `Packages/manifest.json` |
 | `com.unity.ai.inference` | 2.6.1 — **без изменений** | там же |
 | URP | 17.5.0 — без изменений | там же |

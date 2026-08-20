@@ -11,7 +11,7 @@
 | Параметр | Значение |
 |---|---|
 | Идентификатор среды | `E01_GridWorld` (он же **Behavior Name**, правило 5.3) |
-| Unity | 6000.5.8f1 |
+| Unity | 6000.5.4f1 |
 | ML-Agents | `com.unity.ml-agents` 4.0.3; Python `mlagents` 1.2.0.dev0 (`release_23_tag`) |
 | Render Pipeline | URP 17.5.0 |
 | Версия TS | 1.1 |

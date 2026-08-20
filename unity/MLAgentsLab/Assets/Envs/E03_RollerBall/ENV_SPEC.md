@@ -14,7 +14,7 @@
 
 | Параметр | Значение |
 |---|---|
-| Unity | 6000.5.8f1 |
+| Unity | 6000.5.4f1 |
 | ML-Agents | `com.unity.ml-agents` 4.0.3 |
 | Render Pipeline | URP 17.5.0 |
 
