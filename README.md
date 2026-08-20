@@ -199,7 +199,7 @@ python scripts\verify_onnx.py results\...\onnx\policy.onnx --discrete-branches 4
 | [`docs/algos/`](docs/algos/) | карточка на каждый алгоритм |
 | [`docs/ASSUMPTIONS.md`](docs/ASSUMPTIONS.md) | реестр допущений |
 | [`docs/adr/`](docs/adr/) | архитектурные решения |
-| [`docs/feedback_to_lessons.md`](docs/feedback_to_lessons.md) | предложения по урокам курса (правки в `cyber-unity-learn` не вносятся — правило 3.1) |
+| [`docs/feedback_to_lessons.md`](docs/feedback_to_lessons.md) | предложения по урокам курса (правки в `cyber-unity-learn` внесены с разрешения пользователя — допущения A-39, A-40) |
 
 ## Лицензия
 
