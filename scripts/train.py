@@ -55,6 +55,7 @@ from labrl.export.onnx_verify import verify_onnx_model  # noqa: E402
 from labrl.logging.run_dir import create_run_dir  # noqa: E402
 from labrl.logging.tb_logger import TBLogger, git_commit_hash  # noqa: E402
 from labrl.nets.categorical_policy import MultiBranchCategoricalPolicy  # noqa: E402
+from labrl.nets.fca import FCAPolicy, KEYDOOR_ATTRIBUTES, build_concept_layer  # noqa: E402
 from labrl.nets.gaussian_policy import GaussianPolicyNetwork  # noqa: E402
 from labrl.nets.hybrid_policy import GridHybridPolicy, GridValueNetwork  # noqa: E402
 from labrl.nets.mlp import MLPContinuousQNetwork, MLPQNetwork, MLPValueNetwork  # noqa: E402
@@ -585,6 +586,74 @@ def load_demonstrations(cfg: ExperimentConfig, vec=None) -> Demonstrations:  # n
     return demos
 
 
+def build_fca_ppo(cfg: ExperimentConfig, vec, seed: int) -> PPODiscrete:  # noqa: ANN001
+    """Собирает политику со слоем понятий FCA (исследовательский слот `E11`).
+
+    Порядок важен и объясняет, почему это отдельная функция, а не ветка
+    :func:`build_algo`: решётка понятий строится **по данным**, значит
+    сначала нужно собрать опыт, и только потом становится известна
+    размерность входа MLP.
+
+    Опыт собирается **случайной** политикой. Он должен быть разнообразным,
+    а не хорошим: понятия описывают структуру пространства состояний,
+    а не удачные траектории.
+    """
+    spec = cfg.raw.get("fca")
+    if not spec:
+        raise ValueError("конфиг fca_ppo требует блока fca (num_attributes, warmup_steps, …)")
+
+    num_attributes = int(spec["num_attributes"])
+    warmup = int(spec.get("warmup_steps", 2000))
+    branches = tuple(vec.action_spec.discrete_branches)
+    rng = np.random.default_rng(seed)
+
+    print(f"сбор опыта для решётки понятий: {warmup} шагов случайной политикой…", flush=True)
+    collected: list[np.ndarray] = []
+    obs = vec.reset()
+    for _ in range(warmup):
+        collected.append(vec.flatten_obs(obs).copy())
+        actions = np.stack([rng.integers(0, b, size=vec.num_envs) for b in branches], axis=1)
+        obs = vec.step(actions.astype(np.int32)).obs
+    experience = np.concatenate(collected, axis=0)
+
+    layer, context = build_concept_layer(
+        experience,
+        num_attributes=num_attributes,
+        min_support=float(spec.get("min_support", 0.02)),
+        max_intent=spec.get("max_intent"),
+        attribute_names=list(KEYDOOR_ATTRIBUTES)[:num_attributes],
+    )
+    print(context.describe(), flush=True)
+    print(layer.describe(list(KEYDOOR_ATTRIBUTES)[:num_attributes]), flush=True)
+
+    sharpness = float(spec.get("sharpness", 20.0))
+    layer.binarize_sharpness = sharpness
+    layer.concept_sharpness = sharpness
+
+    hidden = tuple(cfg.network.get("hidden_sizes", (128, 128)))
+    activation = cfg.network.get("activation", "relu")
+    obs_dim = vec.single_obs_dim
+
+    return PPODiscrete(
+        FCAPolicy(obs_dim, branches, layer, hidden, activation),
+        MLPValueNetwork(obs_dim, tuple(cfg.network.get("value_hidden_sizes", hidden)), activation),
+        PPOConfig(
+            gamma=float(cfg.algo["gamma"]),
+            gae_lambda=float(cfg.algo["gae_lambda"]),
+            learning_rate=float(learning_rate_schedule(cfg)(0)),
+            clip_range=float(cfg.algo["clip_range"]),
+            epochs=int(cfg.algo["epochs"]),
+            minibatch_size=int(cfg.algo["minibatch_size"]),
+            value_coef=float(cfg.algo.get("value_coef", 0.5)),
+            entropy_coef=float(cfg.algo.get("entropy_coef", 0.01)),
+            max_grad_norm=float(cfg.algo.get("max_grad_norm", 0.5)),
+            normalize_advantage=bool(cfg.algo.get("normalize_advantage", True)),
+            target_kl=float(cfg.algo.get("target_kl", 0.0)),
+        ),
+        device=resolve_device("auto"), seed=seed,
+    )
+
+
 def build_gail(cfg: ExperimentConfig, vec, seed: int) -> GAIL:  # noqa: ANN001
     """Собирает дискриминатор GAIL и подключает к нему демонстрации.
 
@@ -656,8 +725,11 @@ def run_seed(cfg: ExperimentConfig, seed: int, quick: bool, worker_id: int = 0) 
         # single_obs_dim определён только для векторных сенсоров; у среды
         # с сеткой его вычислять нельзя, и алгоритм получает формы как есть.
         obs_dim = 0 if cfg.algo_name == "reinforce" else vec.single_obs_dim
-        algo = build_algo(cfg, obs_dim, num_actions, seed,
-                          obs_shapes=vec.obs_shapes, discrete_branches=discrete)
+        # У fca_ppo сеть строится ПО ДАННЫМ: сначала опыт, потом решётка
+        # понятий, и только потом становится известен размер входа MLP.
+        algo = (build_fca_ppo(cfg, vec, seed) if cfg.algo_name == "fca_ppo"
+                else build_algo(cfg, obs_dim, num_actions, seed,
+                                obs_shapes=vec.obs_shapes, discrete_branches=discrete))
         logger = TBLogger(run.tb)
 
         # Учебный план (урок 3.3). Живёт в Python и меняет одно число —
@@ -755,7 +827,7 @@ def run_seed(cfg: ExperimentConfig, seed: int, quick: bool, worker_id: int = 0) 
                 seed=seed, on_eval=report,
                 lr_schedule=learning_rate_schedule(cfg),
             )
-        elif cfg.algo_name in ("a2c", "ppo", "ppo_discrete"):
+        elif cfg.algo_name in ("a2c", "ppo", "ppo_discrete", "fca_ppo"):
             result = train_on_policy(
                 vec=vec, algo=algo, logger=logger,
                 cfg=OnPolicyTrainConfig(

@@ -24,7 +24,10 @@ class EnvEntry:
     env_id: str
     title: str
     category: str
-    status: str  # PLANNED | IN_PROGRESS | DONE
+    #: PLANNED — код примера присвоен, среды ещё нет;
+    #: READY_TO_TRAIN — сцена, конфиг и ноутбук готовы, обучение не запускалось;
+    #: DONE — все пункты DoD раздела 14 выполнены и подтверждены измерением.
+    status: str
 
     @property
     def unity_folder(self) -> Path:
@@ -45,18 +48,18 @@ class EnvEntry:
 REGISTRY: dict[str, EnvEntry] = {
     entry.env_id: entry
     for entry in [
-        EnvEntry("E00_Bandit", "Многорукий бандит", "Основы", "PLANNED"),
+        EnvEntry("E00_Bandit", "Многорукий бандит", "Основы", "DONE"),
         EnvEntry("E01_GridWorld", "GridWorld 5×5", "Табличные методы", "DONE"),
-        EnvEntry("E02_CartPoleUnity", "Балансировка шеста", "Табличные методы", "PLANNED"),
+        EnvEntry("E02_CartPoleUnity", "Балансировка шеста", "Табличные методы", "DONE"),
         EnvEntry("E03_RollerBall", "Докатись до цели", "Value-based", "DONE"),
-        EnvEntry("E04_BallBalance", "Удержание шара на платформе", "Непрерывное управление", "PLANNED"),
-        EnvEntry("E05_FoodCollector", "Сбор еды", "Policy gradient", "PLANNED"),
-        EnvEntry("E06_Hunter3D", "Преследование в 3D", "Actor-Critic", "PLANNED"),
-        EnvEntry("E07_RacingCar", "Гоночная трасса", "Непрерывное управление", "PLANNED"),
-        EnvEntry("E08_SoccerArena", "Футбольная арена", "Мультиагентность", "PLANNED"),
-        EnvEntry("E09_CurriculumMaze", "Лабиринт с curriculum", "Curriculum / DR", "PLANNED"),
-        EnvEntry("E10_Imitation", "Имитационное обучение", "Имитация", "PLANNED"),
-        EnvEntry("E11_Research", "Исследовательский слот", "Исследования", "PLANNED"),
+        EnvEntry("E04_BallBalance", "Удержание шара на платформе", "Непрерывное управление", "DONE"),
+        EnvEntry("E05_FoodCollector", "Сбор еды", "Policy gradient", "DONE"),
+        EnvEntry("E06_Hunter3D", "Преследование в 3D", "Actor-Critic", "DONE"),
+        EnvEntry("E07_RacingCar", "Гоночная трасса", "Непрерывное управление", "DONE"),
+        EnvEntry("E08_SoccerArena", "Футбольная арена", "Мультиагентность", "READY_TO_TRAIN"),
+        EnvEntry("E09_CurriculumMaze", "Лабиринт с curriculum", "Curriculum / DR", "READY_TO_TRAIN"),
+        EnvEntry("E10_Imitation", "Имитационное обучение", "Имитация", "READY_TO_TRAIN"),
+        EnvEntry("E11_Research", "Ключ и дверь: слой понятий FCA", "Исследования", "READY_TO_TRAIN"),
     ]
 }
 

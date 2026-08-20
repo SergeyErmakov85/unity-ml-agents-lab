@@ -1,0 +1,75 @@
+# E11_Research — обычный PPO. Контрольная точка сравнения для FCA.
+#
+# Модуль курса: https://rl-cuber-unity-code.com/fca-rl
+#
+# Этот конфиг существует ради СРАВНЕНИЯ: та же среда, тот же бюджет,
+# те же гиперпараметры — но политика без слоя понятий. Разница в числе
+# шагов среды до порога и есть измеряемый эффект FCA.
+#
+# Всё, что отличает его от configs/E11_Research__fca_ppo.yaml, — отсутствие
+# блока `fca` и другое имя алгоритма. Общая часть обязана совпадать:
+# сравнение методов при разных бюджетах сравнивает не методы, а настройки
+# (docs/03_CONVENTIONS.md, §6).
+
+experiment:
+  env_id: E11_Research
+  algo: ppo_discrete
+  seeds: [0, 1, 2]
+  total_steps: 300000
+  notes: "Модуль /fca-rl: контрольный прогон без слоя понятий"
+
+env:
+  mode: build
+  build_path: builds/E11_Research/E11_Research.exe
+  num_areas: 8
+  time_scale: 20.0
+  no_graphics: true
+  env_parameters:
+    difficulty: 1.0
+
+network:
+  # Вход MLP: 16 признаков наблюдения. Слоя понятий здесь нет — в этом
+  # и состоит вся разница с configs/E11_Research__fca_ppo.yaml.
+  type: mlp
+  hidden_sizes: [128, 128]
+  activation: relu
+
+algo:
+  gamma: 0.99
+  gae_lambda: 0.95
+  learning_rate:
+    type: linear
+    start: 0.0003
+    end: 0.00005
+    decay_steps: 300000
+  clip_range: 0.2
+  epochs: 4
+  minibatch_size: 512
+  rollout_steps: 256
+  value_coef: 0.5
+  entropy_coef: 0.01
+  max_grad_norm: 0.5
+  normalize_advantage: true
+  target_kl: 0.0
+  epsilon: 0.0
+
+eval:
+  # Часто — намеренно. Измеряемая величина этого слота не итоговая доля
+  # успехов (она упирается в потолок у обоих методов), а ЧИСЛО ШАГОВ
+  # до порога. При оценке раз в 20 000 шагов оба метода показывали 100 %
+  # уже на первом замере, и сравнивать было нечего (измерено).
+  every_steps: 2500
+  episodes: 30
+  deterministic: true
+  # Успех — по исходу эпизода: награда содержит и премию за ключ,
+  # и штраф за время, и мерой качества не является (T-15).
+  success_rule: terminated
+
+success_criteria:
+  metric: Eval/Success Rate
+  threshold: 0.7
+  within_steps: 300000
+
+export:
+  onnx_path: unity/MLAgentsLab/Assets/Envs/E11_Research/Models/E11_Research_ppo.onnx
+  verify: true
