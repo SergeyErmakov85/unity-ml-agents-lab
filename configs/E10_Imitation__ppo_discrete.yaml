@@ -1,0 +1,71 @@
+# E10_Imitation — чистый RL, без демонстраций. Контрольная точка сравнения.
+#
+# Урок: https://rl-cuber-unity-code.com/courses/3-4 (BC и GAIL)
+#
+# Этот конфиг существует не ради результата, а ради СРАВНЕНИЯ. Он показывает,
+# сколько стоит та же задача без демонстраций: награда даётся только на выходе,
+# а до выхода 48 ходов по коридору шириной в одну клетку. Случайная политика
+# доходит в 0.0 % эпизодов (измерено на билде, 104 эпизода), то есть
+# на старте градиент тождественно нулевой.
+#
+# Бюджет здесь ВЧЕТВЕРО больше, чем у GAIL, и порог приёмки ниже — и это
+# ожидаемый результат, а не недонастройка.
+
+experiment:
+  env_id: E10_Imitation
+  algo: ppo_discrete
+  seeds: [0, 1, 2]
+  total_steps: 600000
+  notes: "Урок 3.4: чистый RL как точка отсчёта для BC и GAIL"
+
+env:
+  mode: build
+  build_path: builds/E10_Imitation/E10_Imitation.exe
+  num_areas: 8
+  time_scale: 20.0
+  no_graphics: true
+  env_parameters:
+    difficulty: 1.0
+
+network:
+  type: mlp
+  hidden_sizes: [128, 128]
+  activation: relu
+
+algo:
+  gamma: 0.99
+  gae_lambda: 0.95
+  learning_rate:
+    type: linear
+    start: 0.0003
+    end: 0.00005
+    decay_steps: 600000
+  clip_range: 0.2
+  epochs: 4
+  minibatch_size: 512
+  rollout_steps: 256
+  value_coef: 0.5
+  # Втрое выше обычного: без разведки политика не найдёт выход никогда,
+  # а найти его нужно хотя бы раз, чтобы обучение вообще началось.
+  entropy_coef: 0.03
+  max_grad_norm: 0.5
+  normalize_advantage: true
+  target_kl: 0.0
+  epsilon: 0.0
+
+eval:
+  every_steps: 25000
+  episodes: 30
+  deterministic: true
+  success_rule: terminated
+
+success_criteria:
+  # Ниже, чем у BC и GAIL: смысл конфига — измерить цену отказа
+  # от демонстраций, а не добиться результата любой ценой.
+  metric: Eval/Success Rate
+  threshold: 0.3
+  within_steps: 600000
+
+export:
+  onnx_path: unity/MLAgentsLab/Assets/Envs/E10_Imitation/Models/E10_Imitation_ppo.onnx
+  verify: true

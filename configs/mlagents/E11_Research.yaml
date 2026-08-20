@@ -1,0 +1,46 @@
+# Эталонный конфиг ШТАТНОГО тренера ML-Agents для E11_Research (п. 12.5).
+#
+# Он существует не для того, чтобы им пользовались вместо labrl, а чтобы
+# при подозрении на ошибку было с чем сравнить: если штатный тренер учится,
+# а наш — нет, дело в нашем коде; если не учится ни один — дело в среде.
+#
+# Запуск (из корня репозитория, при активированном python/.venv):
+#   mlagents-learn configs/mlagents/E11_Research.yaml \
+#     --env=builds/E11_Research/E11_Research.exe --run-id=E11_ppo_ref
+#
+# Ключ behaviors ОБЯЗАН содержать идентификатор среды: иначе тренер
+# не подключится к сцене (правило 5.3).
+#
+# Слоя понятий FCA у штатного тренера нет и быть не может: это наша
+# надстройка над политикой. Эталон здесь — обычный PPO, то есть прямой
+# аналог configs/E11_Research__ppo_discrete.yaml (контрольный прогон).
+
+behaviors:
+  E11_Research:
+    trainer_type: ppo
+
+    hyperparameters:
+      batch_size: 1024
+      buffer_size: 10240
+      learning_rate: 0.0003
+      beta: 0.01          # у нас — entropy_coef
+      epsilon: 0.2         # у нас — clip_range
+      lambd: 0.95          # у нас — gae_lambda
+      num_epoch: 4
+      learning_rate_schedule: linear
+
+    network_settings:
+      normalize: false
+      hidden_units: 128
+      num_layers: 2
+      vis_encode_type: simple
+
+    reward_signals:
+      extrinsic:
+        gamma: 0.99
+        strength: 1.0
+
+    keep_checkpoints: 5
+    max_steps: 2000000
+    time_horizon: 200
+    summary_freq: 10000

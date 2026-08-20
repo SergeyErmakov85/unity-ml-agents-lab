@@ -1,0 +1,71 @@
+# SAC в среде E07_RacingCar — урок 3.1 и проект-3.
+#
+# SAC выбран не по вкусу: шаг здесь дорог (заезд до 400 решений, авария
+# обрывает его через десяток), а off-policy метод переиспользует каждый
+# переход многократно. Это его практическая ниша.
+#
+# Структура блоков — Приложение A инструкции проекта.
+
+experiment:
+  env_id: E07_RacingCar
+  algo: sac
+  seeds: [0, 1, 2]
+  total_steps: 60000        # шагов сбора; шаг = одно решение по всем аренам
+  notes: "Урок 3.1 и проект-3. Max-entropy цель, два критика, автоподстройка α."
+
+env:
+  mode: build
+  build_path: builds/E07_RacingCar/E07_RacingCar.exe
+  num_areas: 8
+  time_scale: 20.0
+  no_graphics: true
+  env_parameters:
+    difficulty: 1.0
+
+network:
+  # Вход политики — склейка двух сенсоров: 27 (лучи) + 8 (вектор) = 35.
+  # Сети шире, чем в E04/E06: у SAC их четыре (актор и два критика плюс
+  # целевые копии), и каждая решает более простую задачу, чем актор PPO.
+  type: squashed_gaussian
+  hidden_sizes: [256, 256]
+  critic_hidden_sizes: [256, 256]
+  activation: relu          # relu, а не tanh: у критиков нет требования гладкости
+
+algo:
+  gamma: 0.99
+  # Шаг обучения постоянный. У SAC нет проблемы «шум критика в нормированных
+  # преимуществах» (T-13): преимущества здесь не считаются вовсе, а
+  # энтропийная часть цели сама удерживает политику от вырождения.
+  learning_rate: 0.0003
+  batch_size: 256
+  buffer_size: 300000       # весь опыт прогона помещается целиком
+  learning_starts: 5000     # разогрев равномерно случайными действиями
+  train_freq: 1
+  gradient_steps: 1         # одно обновление на шаг среды — обычный режим SAC
+  tau: 0.005                # мягкое обновление целевых критиков
+  init_alpha: 0.2
+  autotune_alpha: true      # целевая энтропия по умолчанию -dim(A) = -2
+  max_grad_norm: 0.0        # без клиппинга: у SAC он обычно не требуется
+  # ε методом не используется: разведка встроена в цель через энтропию.
+  epsilon:
+    type: constant
+    value: 0.0
+
+eval:
+  every_steps: 12000
+  episodes: 20
+  deterministic: true
+  # Успех — замкнутый круг. И круг, и авария завершают эпизод сами, поэтому
+  # правило `terminated` их не различает; зато награда различает однозначно:
+  # круг стоит около 13, авария — ровно −1.
+  success_rule: reward_above
+  success_threshold: 10.0
+
+success_criteria:
+  metric: Eval/Success Rate
+  threshold: 0.80
+  within_steps: 60000
+
+export:
+  onnx_path: unity/MLAgentsLab/Assets/Envs/E07_RacingCar/Models/E07_RacingCar_sac.onnx
+  verify: true

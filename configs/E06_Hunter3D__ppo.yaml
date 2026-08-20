@@ -1,0 +1,78 @@
+# PPO в среде E06_Hunter3D — навигация с формированием награды.
+#
+# Уроки 2.2 (PPO с нуля), 2.4 (Reward Shaping), проект-2 «3D-охотник».
+# Структура блоков — Приложение A инструкции проекта.
+
+experiment:
+  env_id: E06_Hunter3D
+  algo: ppo
+  seeds: [0, 1, 2]
+  total_steps: 160000       # шагов сбора; шаг = один env.step() = одно решение по всем аренам
+  notes: "Уроки 2.2 и 2.4, проект-2. Два сенсора (лучи + вектор) и потенциальное формирование награды. Бюджет 160k: при 80k кривая ещё росла (90/75/70 % на трёх сидах)."
+
+env:
+  mode: build
+  build_path: builds/E06_Hunter3D/E06_Hunter3D.exe
+  num_areas: 8              # 8 арен в сцене = 8 параллельных сред
+  time_scale: 20.0          # выше ~20 ломается физика PhysX
+  no_graphics: true
+  env_parameters:
+    difficulty: 1.0
+
+network:
+  # Вход политики — склейка двух сенсоров: 15 (лучи) + 10 (вектор) = 25.
+  # Порядок склейки задаётся порядком сенсоров в Unity и обязан совпадать
+  # с порядком obs_0, obs_1 в графе ONNX (labrl.envs.vec_unity_env.flatten_obs).
+  type: gaussian_mlp
+  hidden_sizes: [128, 128]
+  value_hidden_sizes: [128, 128]
+  activation: tanh
+  log_std_init: -0.3
+
+algo:
+  # ВНИМАНИЕ: gamma обязана совпадать с shapingGamma агента в Unity (0.99).
+  # Теорема Ына о неизменности оптимальной политики доказана для одного и того
+  # же γ; при расхождении формирование награды перестаёт быть безопасным.
+  gamma: 0.99
+  gae_lambda: 0.95
+  learning_rate:
+    type: linear
+    start: 0.0003
+    end: 0.0
+    decay_steps: 160000
+  rollout_steps: 512        # 512 шагов × 8 арен = 4096 переходов на обновление
+  clip_range: 0.2
+  epochs: 4
+  minibatch_size: 256
+  target_kl: 0.0
+  value_coef: 0.5
+  # Энтропия выше, чем в E04: навигация требует разведки, а платформа
+  # с шаром — почти нет.
+  entropy_coef: 0.01
+  max_grad_norm: 0.5
+  normalize_advantage: true
+  epsilon:
+    type: constant
+    value: 0.0
+
+eval:
+  every_steps: 20000
+  episodes: 20
+  deterministic: true
+  # Успех определяется ИСХОДОМ эпизода, а не наградой. В среде с формированием
+  # награды недисконтированная сумма содержит смещение (γ−1)·ΣΦ, зависящее
+  # от того, ГДЕ агент провёл эпизод: провал у дальней стенки стоит +0.41,
+  # а провал рядом с целью −0.65. Порог «80 % пойманных» в порог по награде
+  # поэтому не переводится (T-15 в docs/07_TROUBLESHOOTING.md).
+  success_rule: terminated
+  success_threshold: 0.0    # правилом terminated не используется
+
+success_criteria:
+  # Приёмка — по доле пойманных целей, а не по награде: см. выше.
+  metric: Eval/Success Rate
+  threshold: 0.80
+  within_steps: 160000
+
+export:
+  onnx_path: unity/MLAgentsLab/Assets/Envs/E06_Hunter3D/Models/E06_Hunter3D_ppo.onnx
+  verify: true

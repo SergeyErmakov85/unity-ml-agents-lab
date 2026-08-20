@@ -1,0 +1,84 @@
+# PPO в среде E04_BallBalance — проект-1 курса «Баланс в 3D».
+#
+# Отличие от A2C — правило обновления: отношение правдоподобий с обрезкой
+# позволяет пройти по одному роллауту несколько эпох, а не один раз.
+# Среда, сеть, GAE и бюджет шагов намеренно совпадают
+# с configs/E04_BallBalance__a2c.yaml: иначе сравнение методов было бы
+# сравнением настроек. Различаются только длина роллаута и шаг обучения —
+# и это само по себе различие методов: A2C делает один шаг градиента
+# на роллаут и потому требует короткого роллаута, PPO из роллаута в 128 шагов
+# делает 4 эпохи × 4 мини-батча = 16 шагов.
+#
+# Структура блоков — Приложение A инструкции проекта.
+
+experiment:
+  env_id: E04_BallBalance
+  algo: ppo
+  seeds: [0, 1, 2]
+  total_steps: 100000       # шагов сбора; шаг = один env.step() по всем аренам
+  notes: "Проект-1 и урок 2.2. PPO с обрезкой и GAE; сравнение с A2C на том же бюджете."
+
+env:
+  mode: build
+  build_path: builds/E04_BallBalance/E04_BallBalance.exe
+  num_areas: 8
+  time_scale: 20.0
+  no_graphics: true
+  env_parameters:
+    difficulty: 1.0
+
+network:
+  type: gaussian_mlp
+  hidden_sizes: [128, 128]
+  value_hidden_sizes: [128, 128]
+  activation: tanh
+  log_std_init: -0.3
+
+algo:
+  gamma: 0.99
+  gae_lambda: 0.95
+  # Шаг обучения затухает до нуля к концу бюджета — как и у штатного
+  # тренера ML-Agents (learning_rate_schedule: linear). Причина не в
+  # тонкой настройке: когда задача решена, награда среды становится
+  # почти постоянной, преимущества вырождаются в шум критика, а их
+  # нормировка возводит этот шум обратно в единичный масштаб —
+  # и политика начинает случайно блуждать, разрушая уже выученное
+  # (измерено, T-13 в docs/07_TROUBLESHOOTING.md).
+  learning_rate:
+    type: linear
+    start: 0.0003
+    end: 0.0
+    decay_steps: 100000
+  # Длинный роллаут — не расточительность, а борьба с шумом. Преимущества
+  # нормируются по батчу, поэтому чем он меньше, тем сильнее нормировка
+  # раздувает случайные отклонения. Измерено на 1024 переходах: сид 0 дошёл
+  # до 100.0, сид 1 закончил на 78.2 при пороге 80 — разброс между сидами
+  # был вызван шумом оценки, а не разной удачей обучения.
+  # Штатный тренер ML-Agents на этой же задаче копит 12000 переходов.
+  rollout_steps: 512        # 512 шагов × 8 арен = 4096 переходов на обновление
+  clip_range: 0.2           # ширина ε обрезки отношения правдоподобий
+  epochs: 4                 # столько раз проходим по одному роллауту
+  minibatch_size: 256
+  target_kl: 0.0            # 0 — не прекращать эпохи досрочно; обрезки достаточно
+  value_coef: 0.5
+  entropy_coef: 0.001
+  max_grad_norm: 0.5
+  normalize_advantage: true
+  epsilon:
+    type: constant
+    value: 0.0
+
+eval:
+  every_steps: 20000
+  episodes: 20
+  deterministic: true
+  success_threshold: 99.0
+
+success_criteria:
+  metric: Eval/Mean Reward
+  threshold: 80.0
+  within_steps: 100000
+
+export:
+  onnx_path: unity/MLAgentsLab/Assets/Envs/E04_BallBalance/Models/E04_BallBalance_ppo.onnx
+  verify: true

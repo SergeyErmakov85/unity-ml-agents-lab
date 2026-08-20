@@ -1,0 +1,102 @@
+# E10_Imitation — GAIL.
+#
+# Урок: https://rl-cuber-unity-code.com/courses/3-4 (BC и GAIL)
+#
+# GAIL чинит то, на чём ломается BC: сдвиг распределения. BC учится только
+# на состояниях, которые посещал эксперт, и первая же ошибка выводит политику
+# туда, где её никто не учил. Дискриминатор даёт сигнал ВЕЗДЕ: в незнакомом
+# состоянии он уверенно говорит «это не эксперт», и награда падает.
+#
+# Цена — взаимодействие со средой: GAIL, в отличие от BC, это полноценный
+# RL-цикл, просто с другой наградой.
+
+experiment:
+  env_id: E10_Imitation
+  algo: gail
+  seeds: [0, 1, 2]
+  total_steps: 150000
+  notes: "Урок 3.4: GAIL — дискриминатор вместо функции награды"
+
+env:
+  mode: build
+  build_path: builds/E10_Imitation/E10_Imitation.exe
+  num_areas: 8
+  time_scale: 20.0
+  no_graphics: true
+  env_parameters:
+    difficulty: 1.0
+
+demonstrations:
+  path: data/demos/E10_Imitation_expert.npz
+  episodes: 100
+  expert: corridor
+
+network:
+  # Политика — та же категориальная, что у ppo_discrete.
+  type: mlp
+  hidden_sizes: [128, 128]
+  activation: relu
+  # Дискриминатор. Меньше политики намеренно: слишком сильный дискриминатор
+  # выигрывает состязание, его точность уходит к 1.0, и сигнал политике
+  # пропадает.
+  discriminator_hidden_sizes: [128, 128]
+  discriminator_activation: tanh
+
+algo:
+  # --- политика (PPO с категориальным распределением) ---
+  gamma: 0.99
+  gae_lambda: 0.95
+  learning_rate:
+    type: linear
+    start: 0.0003
+    end: 0.00005
+    decay_steps: 150000
+  clip_range: 0.2
+  epochs: 4
+  minibatch_size: 512
+  rollout_steps: 256
+  value_coef: 0.5
+  entropy_coef: 0.01
+  max_grad_norm: 0.5
+  normalize_advantage: true
+  target_kl: 0.0
+  epsilon: 0.0
+
+  # --- дискриминатор ---
+  # Скорость обучения на порядок ниже, чем у политики: слишком быстрый
+  # дискриминатор выигрывает состязание, и градиент политике обнуляется.
+  discriminator_learning_rate: 0.0001
+  discriminator_batch_size: 256
+  # Два шага дискриминатора на один роллаут политики.
+  discriminator_updates_per_batch: 2
+  # Цель эксперта 0.9, а не 1.0: идеально уверенный дискриминатор
+  # даёт нулевой градиент политике.
+  label_smoothing: 0.1
+  # Штраф на норму градиента (Gulrajani et al., 2017): ограничивает
+  # липшицеву константу и не даёт дискриминатору «обрубать» награду.
+  gradient_penalty: 10.0
+  # Доля награды среды в итоговой награде политики.
+  # 0 — чистый GAIL: метод честно показывает, на что способна имитация
+  # без функции награды. Ненулевое значение лечит склонность GAIL тянуть
+  # эпизод (награда −log(1−D) всегда положительна, и «жить дольше» выгодно).
+  env_reward_weight: 0.2
+  reward_scale: 1.0
+
+eval:
+  every_steps: 10000
+  episodes: 30
+  deterministic: true
+  # Оценка ВСЕГДА по награде среды: награда дискриминатора измеряет похожесть
+  # на эксперта, а не решение задачи, и сравнивать по ней прогоны бессмысленно.
+  success_rule: terminated
+
+success_criteria:
+  # Выше, чем у BC: GAIL для того и нужен, чтобы пройти там, где BC
+  # спотыкается на незнакомых состояниях.
+  metric: Eval/Success Rate
+  threshold: 0.8
+  within_steps: 150000
+
+export:
+  onnx_path: unity/MLAgentsLab/Assets/Envs/E10_Imitation/Models/E10_Imitation_gail.onnx
+  verify: true
