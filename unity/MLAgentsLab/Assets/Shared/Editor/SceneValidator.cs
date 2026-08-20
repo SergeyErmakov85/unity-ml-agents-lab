@@ -38,7 +38,14 @@ namespace LabRL.EditorTools
     public static class SceneValidator
     {
         const string EnvsFolder = "Assets/Envs";
-        static readonly string[] RequiredTags = { "agent", "goal", "trap", "wall", "obstacle" };
+        static readonly string[] RequiredTags =
+        {
+            "agent", "goal", "trap", "wall", "obstacle",
+            // Теги E08_SoccerArena: порядок Detectable Tags у двух команд
+            // зеркальный, и пропажа хотя бы одного тега незаметно ломает
+            // перспективу наблюдения (ENV_SPEC.md среды, §4).
+            "ball", "playerWest", "playerEast", "goalWest", "goalEast",
+        };
 
         /// <summary>Одна найденная проблема.</summary>
         public readonly struct Issue

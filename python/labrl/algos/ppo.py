@@ -33,6 +33,7 @@
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 from typing import Any
 
@@ -120,6 +121,15 @@ class PPO:
         self._rng = np.random.default_rng(seed)
         self.updates = 0
 
+        # Энтропия гауссовой политики зависит только от σ и наблюдения
+        # не требует; энтропия категориальной вычисляется по логитам и без
+        # наблюдения не определена. Правило PPO от этого не меняется, поэтому
+        # различие снимается здесь — один раз, по сигнатуре метода, — а не
+        # копированием update() в отдельный класс.
+        self._entropy_needs_obs = bool(
+            inspect.signature(self.policy_net.entropy).parameters
+        )
+
     # --- взаимодействие со средой ---------------------------------------
 
     @torch.no_grad()
@@ -201,7 +211,8 @@ class PPO:
 
                 value = self.value_net(obs[index]).squeeze(-1)
                 value_loss = F.mse_loss(value, returns[index])
-                entropy = self.policy_net.entropy()
+                entropy = (self.policy_net.entropy(obs[index]) if self._entropy_needs_obs
+                           else self.policy_net.entropy())
 
                 loss = policy_loss + self.cfg.value_coef * value_loss - self.cfg.entropy_coef * entropy
 

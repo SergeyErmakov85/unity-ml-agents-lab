@@ -27,11 +27,18 @@ sys.path.insert(0, str(REPO_ROOT / "python"))
 from labrl.algos.a2c import A2C, A2CConfig  # noqa: E402
 from labrl.algos.bandits import STRATEGIES, Bandit, BanditConfig  # noqa: E402
 from labrl.algos.dqn import DQN, DQNConfig  # noqa: E402
+from labrl.algos.mapoca import (  # noqa: E402
+    MAPOCA,
+    CentralizedCritic,
+    CounterfactualBaseline,
+    MAPOCAConfig,
+)
 from labrl.algos.ppo import PPO, PPOConfig  # noqa: E402
 from labrl.algos.reinforce import REINFORCE, ReinforceConfig  # noqa: E402
 from labrl.algos.sac import SAC, SACConfig  # noqa: E402
 from labrl.algos.tabular.q_learning import QLearning, QLearningConfig  # noqa: E402
 from labrl.envs.state_encoders import BoxDiscretizer, OneHotStateEncoder  # noqa: E402
+from labrl.envs.team_env import TeamUnityEnv, team_behavior_name  # noqa: E402
 from labrl.envs.unity_env import open_unity_env  # noqa: E402
 from labrl.eval.success import REWARD_ABOVE, check_rule  # noqa: E402
 from labrl.envs.vec_unity_env import VecUnityEnv  # noqa: E402
@@ -43,6 +50,7 @@ from labrl.export.onnx_export import (  # noqa: E402
 from labrl.export.onnx_verify import verify_onnx_model  # noqa: E402
 from labrl.logging.run_dir import create_run_dir  # noqa: E402
 from labrl.logging.tb_logger import TBLogger, git_commit_hash  # noqa: E402
+from labrl.nets.categorical_policy import MultiBranchCategoricalPolicy  # noqa: E402
 from labrl.nets.gaussian_policy import GaussianPolicyNetwork  # noqa: E402
 from labrl.nets.hybrid_policy import GridHybridPolicy, GridValueNetwork  # noqa: E402
 from labrl.nets.mlp import MLPContinuousQNetwork, MLPQNetwork, MLPValueNetwork  # noqa: E402
@@ -51,6 +59,7 @@ from labrl.train.bandit import BanditTrainConfig, train_bandit  # noqa: E402
 from labrl.train.dqn import DQNTrainConfig, train_dqn  # noqa: E402
 from labrl.train.onpolicy import OnPolicyTrainConfig, train_on_policy  # noqa: E402
 from labrl.train.reinforce import ReinforceTrainConfig, train_reinforce  # noqa: E402
+from labrl.train.selfplay import SelfPlayConfig, train_selfplay  # noqa: E402
 from labrl.train.sac import SACTrainConfig, train_sac  # noqa: E402
 from labrl.train.tabular import TabularTrainConfig, train_q_learning  # noqa: E402
 from labrl.utils.checkpoint import save_checkpoint  # noqa: E402
@@ -249,6 +258,234 @@ def build_algo(cfg: ExperimentConfig, obs_dim: int, num_actions: int, seed: int 
     )
 
 
+def build_mapoca(cfg: ExperimentConfig, obs_dim: int, branches: tuple[int, ...], seed: int) -> MAPOCA:
+    """Собирает MA-POCA: децентрализованный актор, централизованный критик,
+    контрфактический базлайн.
+
+    Три сети, а не одна, потому что у них три разные роли (`labrl.algos.mapoca`):
+    актор видит одно наблюдение и уходит в ONNX; критик видит команду целиком;
+    базлайн видит команду и действия всех, кроме одного.
+    """
+    spec = cfg.network
+    device = resolve_device(cfg.algo.get("device", "auto"))
+    embed_dim = int(spec.get("embed_dim", 64))
+    num_heads = int(spec.get("num_heads", 4))
+    hidden = int(spec.get("attention_hidden", 128))
+
+    return MAPOCA(
+        policy_net=MultiBranchCategoricalPolicy(
+            obs_dim, branches,
+            hidden_sizes=tuple(spec.get("hidden_sizes", (256, 256))),
+            activation=spec.get("activation", "relu"),
+        ),
+        value_net=CentralizedCritic(obs_dim, embed_dim, num_heads, hidden),
+        baseline_net=CounterfactualBaseline(obs_dim, branches, embed_dim, num_heads, hidden),
+        cfg=MAPOCAConfig(
+            gamma=float(cfg.algo["gamma"]),
+            gae_lambda=float(cfg.algo["gae_lambda"]),
+            learning_rate=float(learning_rate_schedule(cfg)(0)),
+            clip_range=float(cfg.algo["clip_range"]),
+            epochs=int(cfg.algo["epochs"]),
+            minibatch_size=int(cfg.algo["minibatch_size"]),
+            value_coef=float(cfg.algo["value_coef"]),
+            baseline_coef=float(cfg.algo["baseline_coef"]),
+            entropy_coef=float(cfg.algo["entropy_coef"]),
+            max_grad_norm=float(cfg.algo["max_grad_norm"]),
+            normalize_advantage=bool(cfg.algo.get("normalize_advantage", True)),
+            target_kl=float(cfg.algo.get("target_kl", 0.0)),
+        ),
+        device=device,
+        seed=seed,
+    )
+
+
+def run_seed_selfplay(cfg: ExperimentConfig, seed: int, quick: bool, worker_id: int = 0) -> dict:
+    """Прогон самоигры (`E08_SoccerArena`, MA-POCA).
+
+    Отдельный путь, а не ветка в :func:`run_seed`, потому что здесь другая
+    обёртка среды: команда — не набор независимых слотов, а одна единица шага,
+    и команд две (:mod:`labrl.envs.team_env`).
+    """
+    set_global_seed(seed)
+
+    total_steps = cfg.total_steps
+    if quick:
+        total_steps = max(QUICK_MIN_STEPS, total_steps // QUICK_STEP_DIVISOR)
+
+    selfplay = cfg.raw.get("selfplay", {})
+    learner_team = int(selfplay.get("learner_team", 0))
+    opponent_team = int(selfplay.get("opponent_team", 1))
+
+    run = create_run_dir(cfg.env_id, cfg.algo_name, seed)
+    dump_config(cfg, run.config_yaml)
+    run.write_pip_freeze()
+
+    build_path = None if cfg.env["mode"] == "editor" else cfg.env["build_path"]
+    # Среда отдаёт ДВА поведения одного идентификатора, поэтому открывается
+    # она по полному имени команды: resolve_behavior_name отказывается
+    # выбирать «первое попавшееся» из нескольких (labrl.envs.unity_env).
+    handle = open_unity_env(
+        team_behavior_name(cfg.env_id, learner_team),
+        build_path=build_path,
+        seed=seed,
+        time_scale=float(cfg.env.get("time_scale", 20.0)),
+        no_graphics=bool(cfg.env.get("no_graphics", True)),
+        env_parameters=cfg.env.get("env_parameters"),
+        num_areas=int(cfg.env.get("num_areas", 1)),
+        worker_id=worker_id,
+    )
+
+    try:
+        env = TeamUnityEnv(
+            handle,
+            cfg.env_id,
+            team_size=int(selfplay.get("team_size", 2)),
+            team_ids=(learner_team, opponent_team),
+        )
+        env.reset()
+        run.write_env_info({**handle.env_info(), "num_groups": env.num_groups,
+                            "team_size": env.team_size, "seed": seed,
+                            "total_steps": total_steps, "quick": quick})
+
+        algo = build_mapoca(cfg, env.obs_dim, env.discrete_branches, seed)
+        logger = TBLogger(run.tb)
+
+        def report(step: int, reward: float, success: float) -> None:
+            print(f"  шаг {step:>7}: Eval/Mean Reward {reward:+.4f}  доля побед {success:.0%}",
+                  flush=True)
+
+        result = train_selfplay(
+            env=env, algo=algo, logger=logger,
+            cfg=SelfPlayConfig(
+                total_steps=total_steps,
+                rollout_steps=int(cfg.algo["rollout_steps"]),
+                swap_every_steps=int(selfplay.get("swap_every_steps", 5000)),
+                save_every_steps=int(selfplay.get("save_every_steps", 10000)),
+                window=int(selfplay.get("window", 10)),
+                play_against_latest_ratio=float(selfplay.get("play_against_latest_ratio", 0.5)),
+                elo_k=float(selfplay.get("elo_k", 16.0)),
+                eval_every_steps=int(cfg.eval["every_steps"]),
+                eval_matches=int(cfg.eval["episodes"]),
+            ),
+            seed=seed,
+            learner_team=learner_team,
+            opponent_team=opponent_team,
+            lr_schedule=learning_rate_schedule(cfg),
+            on_eval=report,
+        )
+
+        logger.hparams(
+            {
+                "seed": seed, "algo": cfg.algo_name, "env_id": cfg.env_id,
+                "total_steps": total_steps, "num_groups": env.num_groups,
+                "git_commit": git_commit_hash(),
+                **{k: v for k, v in cfg.algo.items() if not isinstance(v, dict)},
+            },
+            {"final/eval_reward": result.last_eval_reward,
+             "final/eval_success": result.last_eval_success,
+             "final/elo": result.final_elo},
+        )
+        missing = logger.missing_required_tags()
+        logger.dump_metrics(run.metrics_json, extra={
+            "seed": seed,
+            "episodes": len(result.match_returns),
+            "eval_history": result.eval_history,
+            "elo_history": result.elo_history,
+            "wall_time_sec": result.wall_time,
+            "missing_required_tags": list(missing),
+        })
+        logger.close()
+
+        save_checkpoint(run.ckpt / "final.pt", algo.state_dict())
+        onnx_path = _export_selfplay(cfg, algo, run.onnx / "policy.onnx", env)
+
+        achieved = (result.last_eval_success
+                    if "Success Rate" in cfg.success_criteria.metric
+                    else result.last_eval_reward)
+
+        summary = {
+            "seed": seed,
+            "run_dir": str(run.root),
+            "eval_reward": result.last_eval_reward,
+            "eval_success": result.last_eval_success,
+            "final_elo": result.final_elo,
+            "criteria_metric": cfg.success_criteria.metric,
+            "achieved": achieved,
+            "episodes": len(result.match_returns),
+            "wall_time_sec": round(result.wall_time, 1),
+            "missing_required_tags": list(missing),
+            "onnx": str(onnx_path) if onnx_path else None,
+            "threshold": cfg.success_criteria.threshold,
+            "passed": bool(achieved >= cfg.success_criteria.threshold),
+        }
+        print(json.dumps(summary, ensure_ascii=False, indent=2), flush=True)
+        return summary
+    finally:
+        handle.close()
+
+
+def _export_selfplay(cfg: ExperimentConfig, algo, dest: Path, env: TeamUnityEnv) -> Path | None:
+    """Экспорт актора MA-POCA. Отличается от :func:`_export` только источником
+    наблюдений для проверки числового паритета."""
+    if not cfg.export.get("verify", True) and not cfg.export.get("onnx_path"):
+        return None
+
+    spec = ActionSpecLite(discrete_branches=env.discrete_branches,
+                          continuous_size=int(env.action_spec.continuous_size))
+    obs_shapes = [tuple(o.shape) for o in env.spec.observation_specs]
+    policy = algo.policy_module()
+
+    path = export_policy_to_onnx(policy, spec, obs_shapes, dest,
+                                 strategy="categorical", obs_combiner=_DEFAULT_COMBINER)
+
+    if cfg.export.get("verify", True):
+        sample = _collect_team_sample_obs(env, count=64)
+        result = verify_onnx_model(path, policy, spec, obs_shapes, sample_obs=sample,
+                                   obs_combiner=_DEFAULT_COMBINER)
+        print(result.report(), flush=True)
+        result.raise_if_failed()
+
+    final = resolve_path(cfg.export["onnx_path"])
+    final.parent.mkdir(parents=True, exist_ok=True)
+    final.write_bytes(path.read_bytes())
+    print(f"модель скопирована в проект Unity: {final}", flush=True)
+    return final
+
+
+def _collect_team_sample_obs(env: TeamUnityEnv, count: int) -> list[np.ndarray]:
+    """Наблюдения из реального распределения среды — для проверки паритета (10.5).
+
+    Обёртка команд склеивает сенсоры в один вектор, а верификатор подаёт их
+    в граф раздельно (``obs_0``, ``obs_1``, …), поэтому склейка здесь
+    разрезается обратно по формам сенсоров.
+    """
+    rng = np.random.default_rng(0)
+    branches = env.discrete_branches
+    groups, n = env.num_groups, env.team_size
+    flat: list[np.ndarray] = []
+
+    steps = env.reset()
+    while sum(len(f) for f in flat) < count:
+        for team_step in steps.values():
+            present = team_step.active.reshape(groups * n)
+            flat.append(team_step.obs.reshape(groups * n, -1)[present])
+        actions = {
+            team: np.stack(
+                [rng.integers(0, b, size=(groups, n)) for b in branches], axis=-1
+            ).astype(np.int64)
+            for team in env.team_ids
+        }
+        steps = env.step(actions)
+
+    stacked = np.concatenate(flat, axis=0)[:count]
+    out, offset = [], 0
+    for spec in env.spec.observation_specs:
+        width = int(spec.shape[0])
+        out.append(stacked[:, offset : offset + width])
+        offset += width
+    return out
+
+
 def run_seed(cfg: ExperimentConfig, seed: int, quick: bool, worker_id: int = 0) -> dict:
     """Один прогон обучения на одном сиде. Возвращает сводку для отчёта.
 
@@ -256,6 +493,9 @@ def run_seed(cfg: ExperimentConfig, seed: int, quick: bool, worker_id: int = 0) 
     держать несколько обучений одновременно; при одинаковых второй запуск
     не подключится к своей среде, а попытается занять чужой порт.
     """
+    if cfg.algo_name == "mapoca":
+        return run_seed_selfplay(cfg, seed, quick, worker_id)
+
     set_global_seed(seed)
 
     total_steps = cfg.total_steps

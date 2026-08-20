@@ -62,7 +62,14 @@ public static class ProjectBootstrap
         // (список Detectable Tags) и проверки SceneValidator. Добавление тега
         // здесь и в SceneValidator.RequiredTags — единственный способ завести
         // новый: RayPerceptionSensor молча не увидит несуществующий тег.
-        foreach (var tag in new[] { "agent", "goal", "trap", "wall", "obstacle" })
+        // Теги E08_SoccerArena («ball» … «goalEast») в общем списке потому,
+        // что порядок Detectable Tags у двух команд зеркальный, и отсутствие
+        // хотя бы одного из них ломает перспективу наблюдения, не выдав ошибки.
+        foreach (var tag in new[]
+                 {
+                     "agent", "goal", "trap", "wall", "obstacle",
+                     "ball", "playerWest", "playerEast", "goalWest", "goalEast",
+                 })
         {
             if (System.Array.IndexOf(InternalEditorUtility.tags, tag) < 0)
                 InternalEditorUtility.AddTag(tag);

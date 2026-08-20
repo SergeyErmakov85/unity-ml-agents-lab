@@ -9,6 +9,11 @@ TagManager:
   - trap
   - wall
   - obstacle
+  - ball
+  - playerWest
+  - playerEast
+  - goalWest
+  - goalEast
   layers:
   - Default
   - TransparentFX
