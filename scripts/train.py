@@ -34,6 +34,7 @@ from labrl.algos.mapoca import (  # noqa: E402
     MAPOCAConfig,
 )
 from labrl.algos.ppo import PPO, PPOConfig  # noqa: E402
+from labrl.algos.ppo_discrete import PPODiscrete  # noqa: E402
 from labrl.algos.reinforce import REINFORCE, ReinforceConfig  # noqa: E402
 from labrl.algos.sac import SAC, SACConfig  # noqa: E402
 from labrl.algos.tabular.q_learning import QLearning, QLearningConfig  # noqa: E402
@@ -59,6 +60,10 @@ from labrl.train.bandit import BanditTrainConfig, train_bandit  # noqa: E402
 from labrl.train.dqn import DQNTrainConfig, train_dqn  # noqa: E402
 from labrl.train.onpolicy import OnPolicyTrainConfig, train_on_policy  # noqa: E402
 from labrl.train.reinforce import ReinforceTrainConfig, train_reinforce  # noqa: E402
+from labrl.train.curriculum import (  # noqa: E402
+    build_curriculum,
+    evaluate_at_difficulty,
+)
 from labrl.train.selfplay import SelfPlayConfig, train_selfplay  # noqa: E402
 from labrl.train.sac import SACTrainConfig, train_sac  # noqa: E402
 from labrl.train.tabular import TabularTrainConfig, train_q_learning  # noqa: E402
@@ -154,6 +159,36 @@ def build_algo(cfg: ExperimentConfig, obs_dim: int, num_actions: int, seed: int 
                 double_dqn=bool(cfg.algo.get("double_dqn", True)),
             ),
             device=device,
+        )
+
+    if cfg.algo_name == "ppo_discrete":
+        # Тот же PPO, другая политика: категориальная вместо гауссовой.
+        # Правило обновления наследуется без изменений (labrl.algos.ppo_discrete).
+        hidden = tuple(cfg.network.get("hidden_sizes", (256, 256)))
+        activation = cfg.network.get("activation", "relu")
+        device = resolve_device("auto")
+        if not discrete_branches:
+            raise ValueError(
+                "ppo_discrete требует среды с дискретными действиями; "
+                "у этой среды дискретных веток нет"
+            )
+        return PPODiscrete(
+            MultiBranchCategoricalPolicy(obs_dim, discrete_branches, hidden, activation),
+            MLPValueNetwork(obs_dim, tuple(cfg.network.get("value_hidden_sizes", hidden)), activation),
+            PPOConfig(
+                gamma=float(cfg.algo["gamma"]),
+                gae_lambda=float(cfg.algo["gae_lambda"]),
+                learning_rate=float(learning_rate_schedule(cfg)(0)),
+                clip_range=float(cfg.algo["clip_range"]),
+                epochs=int(cfg.algo["epochs"]),
+                minibatch_size=int(cfg.algo["minibatch_size"]),
+                value_coef=float(cfg.algo.get("value_coef", 0.5)),
+                entropy_coef=float(cfg.algo.get("entropy_coef", 0.01)),
+                max_grad_norm=float(cfg.algo.get("max_grad_norm", 0.5)),
+                normalize_advantage=bool(cfg.algo.get("normalize_advantage", True)),
+                target_kl=float(cfg.algo.get("target_kl", 0.0)),
+            ),
+            device=device, seed=seed,
         )
 
     if cfg.algo_name in ("a2c", "ppo"):
@@ -533,9 +568,20 @@ def run_seed(cfg: ExperimentConfig, seed: int, quick: bool, worker_id: int = 0) 
                           obs_shapes=vec.obs_shapes, discrete_branches=discrete)
         logger = TBLogger(run.tb)
 
+        # Учебный план (урок 3.3). Живёт в Python и меняет одно число —
+        # `difficulty` в EnvironmentParametersChannel; среда читает его
+        # на границе эпизода. Отсутствие блока в конфиге означает «плана нет».
+        curriculum = build_curriculum(cfg.raw["curriculum"]) if "curriculum" in cfg.raw else None
+
         def report(step: int, reward: float, success: float) -> None:
             print(f"  шаг {step:>7}: Eval/Mean Reward {reward:+.4f}  Eval/Success Rate {success:.0%}",
                   flush=True)
+            if curriculum is not None and curriculum.report(step, success):
+                # Урок сменился — новую сложность нужно донести до среды.
+                handle.channels.set_difficulty(curriculum.difficulty)
+                print(f"    учебный план: урок {curriculum.index + 1} из "
+                      f"{len(curriculum.lessons)}, difficulty = {curriculum.difficulty:.2f}",
+                      flush=True)
 
         eval_every = int(cfg.eval["every_steps"])
         eval_episodes = int(cfg.eval["episodes"])
@@ -588,7 +634,7 @@ def run_seed(cfg: ExperimentConfig, seed: int, quick: bool, worker_id: int = 0) 
                 seed=seed, on_eval=report,
                 lr_schedule=learning_rate_schedule(cfg),
             )
-        elif cfg.algo_name in ("a2c", "ppo"):
+        elif cfg.algo_name in ("a2c", "ppo", "ppo_discrete"):
             result = train_on_policy(
                 vec=vec, algo=algo, logger=logger,
                 cfg=OnPolicyTrainConfig(
@@ -653,15 +699,34 @@ def run_seed(cfg: ExperimentConfig, seed: int, quick: bool, worker_id: int = 0) 
         # Приёмочное число выбирается по метрике из success_criteria: в средах
         # с формированием награды сравнивать порог с сырой наградой нельзя
         # (docs/07_TROUBLESHOOTING.md, T-15).
-        achieved = (result.last_eval_success
+        final_reward, final_success = result.last_eval_reward, result.last_eval_success
+
+        if curriculum is not None:
+            # Доля успехов на ТЕКУЩЕМ уроке измеряет настройку плана, а не силу
+            # политики: она по построению держится около порога перевода.
+            # Приёмка идёт на фиксированной сложности — одной и той же
+            # у всех сидов и прогонов (labrl.train.curriculum).
+            hold_out = float(cfg.eval.get("eval_difficulty", 1.0))
+            print()
+            print(f"приёмочная оценка на фиксированной сложности {hold_out:.2f} "
+                  f"(учебный план дошёл до {curriculum.difficulty:.2f})", flush=True)
+            outcome = evaluate_at_difficulty(
+                vec, algo, handle.channels, vec.reset(), hold_out,
+                eval_episodes, success_rule, success_threshold,
+            )
+            final_reward, final_success = outcome.mean_reward, outcome.success_rate
+            print(f"  Eval/Mean Reward {final_reward:+.4f}  "
+                  f"Eval/Success Rate {final_success:.0%}", flush=True)
+
+        achieved = (final_success
                     if "Success Rate" in cfg.success_criteria.metric
-                    else result.last_eval_reward)
+                    else final_reward)
 
         summary = {
             "seed": seed,
             "run_dir": str(run.root),
-            "eval_reward": result.last_eval_reward,
-            "eval_success": result.last_eval_success,
+            "eval_reward": final_reward,
+            "eval_success": final_success,
             "criteria_metric": cfg.success_criteria.metric,
             "achieved": achieved,
             "episodes": len(result.episode_returns),

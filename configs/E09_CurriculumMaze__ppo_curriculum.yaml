@@ -1,0 +1,96 @@
+# E09_CurriculumMaze — PPO с учебным планом и рандомизацией среды.
+#
+# Урок: https://rl-cuber-unity-code.com/courses/3-3 (Учебный план и рандомизация)
+#
+# Отличие от остальных конфигов: блок `curriculum`. Сложность среды приходит
+# из Python через EnvironmentParametersChannel и растёт по мере того, как
+# агент начинает справляться. Приёмка при этом идёт НЕ на текущем уроке,
+# а на фиксированной максимальной сложности — иначе метрика измеряла бы
+# настройку плана, а не силу политики.
+
+experiment:
+  env_id: E09_CurriculumMaze
+  algo: ppo_discrete
+  seeds: [0, 1, 2]
+  total_steps: 300000
+  notes: "Урок 3.3: Curriculum Learning + Domain Randomization"
+
+env:
+  mode: build            # build | editor
+  build_path: builds/E09_CurriculumMaze/E09_CurriculumMaze.exe
+  num_areas: 8
+  time_scale: 20.0
+  no_graphics: true
+  env_parameters:
+    # Стартовая сложность. Дальше её меняет учебный план (блок curriculum),
+    # а не этот ключ: он задаёт только начальное значение.
+    difficulty: 0.0
+
+network:
+  # Вход политики: 40 (лучи, 5 × 4 × 2 стека) + 10 (вектор) = 50.
+  type: mlp
+  hidden_sizes: [256, 256]
+  activation: relu
+
+algo:
+  gamma: 0.99
+  gae_lambda: 0.95
+  learning_rate:
+    type: linear
+    start: 0.0003
+    end: 0.00005
+    decay_steps: 300000
+  clip_range: 0.2
+  epochs: 4
+  minibatch_size: 512
+  rollout_steps: 256      # 256 шагов × 8 арен = 2048 переходов на обновление
+  value_coef: 0.5
+  # Выше, чем у сред с плотной наградой: выход надо сначала найти, а
+  # формирования награды здесь нет намеренно (ENV_SPEC.md, §6).
+  entropy_coef: 0.01
+  max_grad_norm: 0.5
+  normalize_advantage: true
+  target_kl: 0.0
+  # Разведка живёт в энтропии политики, а не в ε-жадности. Ключ обязателен
+  # схемой конфигов; ноль означает «методом не используется».
+  epsilon: 0.0
+
+curriculum:
+  # Измеряемая величина — доля успехов на ТЕКУЩЕМ уроке. Награда для этого
+  # не годится: на большой сетке путь длиннее и штраф за время больше,
+  # и один порог означал бы разные вещи на разных уроках.
+  #
+  # min_steps защищает от перевода по одному удачному замеру: доля успехов
+  # по двум десяткам эпизодов шумит заметно.
+  #
+  # Пороги убывают с ростом сложности: требовать 85 % на сетке 11×11 —
+  # значит не дойти до неё никогда.
+  #
+  # Каждый порог выбран ВЫШЕ базовой линии случайной политики, измеренной
+  # на живом билде (ENV_SPEC.md, §14): 70 / 32 / 7 / 5 % соответственно.
+  # Порог ниже базовой линии переводил бы план вперёд за то, чему агент
+  # не научился.
+  - {difficulty: 0.00, threshold: 0.85, min_steps: 20000}   # сетка 5×5,  10 % стен; случайно 70 %
+  - {difficulty: 0.33, threshold: 0.65, min_steps: 30000}   # сетка 7×7,  18 % стен; случайно 32 %
+  - {difficulty: 0.67, threshold: 0.60, min_steps: 40000}   # сетка 9×9,  27 % стен; случайно  7 %
+  - {difficulty: 1.00, threshold: 1.00}                     # сетка 11×11, 35 % стен; случайно  5 %
+
+eval:
+  every_steps: 20000
+  episodes: 30
+  deterministic: true
+  # Успех определяется исходом эпизода, а не наградой: награда содержит
+  # штраф за время, зависящий от длины пути, то есть от сложности (T-15).
+  success_rule: terminated
+  # Сложность приёмочной оценки. Фиксирована и не зависит от того, до какого
+  # урока дошёл план: сравнивать сиды между собой можно только на одной задаче.
+  eval_difficulty: 1.0
+
+success_criteria:
+  metric: Eval/Success Rate
+  threshold: 0.6
+  within_steps: 300000
+
+export:
+  onnx_path: unity/MLAgentsLab/Assets/Envs/E09_CurriculumMaze/Models/E09_CurriculumMaze_ppo.onnx
+  verify: true

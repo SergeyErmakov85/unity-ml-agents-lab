@@ -129,3 +129,9 @@ unity/MLAgentsLab/[Aa]ssets/Shared/Temp.meta
 # содержит список пакетов и параметры машины, то есть меняется у каждого разработчика.
 unity/MLAgentsLab/[Aa]ssets/Resources/PerformanceTestRun*.json
 unity/MLAgentsLab/[Aa]ssets/Resources/PerformanceTestRun*.json.meta
+
+# Каталог Resources создаётся com.unity.test-framework.performance ради
+# PerformanceTestRun*.json (уже игнорируются выше). Сам каталог и его .meta —
+# такой же машинозависимый мусор: содержат параметры машины и список пакетов.
+unity/MLAgentsLab/[Aa]ssets/Resources/
+unity/MLAgentsLab/[Aa]ssets/Resources.meta
