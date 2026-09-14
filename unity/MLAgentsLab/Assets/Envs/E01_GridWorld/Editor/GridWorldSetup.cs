@@ -32,6 +32,18 @@ public static class GridWorldSetup
     /// </summary>
     private const float AreaSpacing = 8f;
 
+    /// <summary>Сторона арены в юнитах (сетка 5×5 клеток по 1 юниту).</summary>
+    private const float AreaSize = 5f;
+
+    /// <summary>Поле вокруг крайних арен в кадре, юниты.</summary>
+    private const float CameraMargin = 1f;
+
+    /// <summary>
+    /// Самое узкое соотношение сторон, при котором все арены гарантированно в кадре.
+    /// 16:10 — с запасом для 16:9; на 4:3 крайние арены обрежутся по бокам.
+    /// </summary>
+    private const float CameraMinAspect = 16f / 10f;
+
     private const string Root = "Assets/Envs/E01_GridWorld";
     private const string ScenePath = Root + "/Scenes/E01_GridWorld.unity";
 
@@ -167,12 +179,17 @@ public static class GridWorldSetup
         BuildUI(firstAgent).transform.SetParent(rootUI.transform, true);
 
         // ---------- Камера ----------
+        // Вид сверху на все K арен сразу: центр ряда по X, а ширина кадра
+        // покрывает ряд целиком. Orthographic Size — это половина высоты кадра,
+        // поэтому нужную полуширину делим на соотношение сторон.
+        float rowCenterX = (AreaCount - 1) * AreaSpacing * 0.5f;
+        float halfWidth = rowCenterX + AreaSize * 0.5f + CameraMargin;
         var cam = Camera.main;
         cam.gameObject.name = "MainCamera";
         cam.transform.SetParent(rootCameras.transform, true);
         cam.orthographic = true;
-        cam.orthographicSize = 3f;
-        cam.transform.position = new Vector3(0f, 10f, 0f);
+        cam.orthographicSize = halfWidth / CameraMinAspect;
+        cam.transform.position = new Vector3(rowCenterX, 10f, 0f);
         cam.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
         cam.clearFlags = CameraClearFlags.SolidColor;
         cam.backgroundColor = ColBackground;
