@@ -136,6 +136,11 @@ unity/MLAgentsLab/[Aa]ssets/Resources/PerformanceTestRun*.json.meta
 unity/MLAgentsLab/[Aa]ssets/Resources/
 unity/MLAgentsLab/[Aa]ssets/Resources.meta
 
+# Профилировочные таймеры ML-Agents: пишутся в Assets/ML-Agents/Timers
+# при каждом запуске сцены и меняются от прогона к прогону.
+unity/MLAgentsLab/[Aa]ssets/ML-Agents/Timers/
+unity/MLAgentsLab/[Aa]ssets/ML-Agents/Timers.meta
+
 # Машинозависимые настройки Unity-пакетов. Путь обновлён под текущую
 # раскладку: до реструктуризации Unity-проект лежал в корне репозитория.
 unity/MLAgentsLab/[Pp]roject[Ss]ettings/Packages/
