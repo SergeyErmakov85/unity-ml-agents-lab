@@ -211,7 +211,7 @@ public static class GridWorldSetup
 
         // ---------- Сохранение ----------
         EditorSceneManager.SaveScene(scene, ScenePath);
-        EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(ScenePath, true) };
+        EnsureSceneInBuildSettings(ScenePath);
         AssetDatabase.SaveAssets();
         Debug.Log($"GridWorld-сцена собрана: {ScenePath}, арен: {AreaCount}, шаг {AreaSpacing}");
     }
@@ -335,6 +335,31 @@ public static class GridWorldSetup
                 AssetDatabase.CreateFolder(current, parts[i]);
             current = next;
         }
+    }
+
+    /// <summary>
+    /// Добавляет сцену в список сборки, не трогая остальные. Полный список
+    /// сцен всех сред задаёт <c>ProjectBootstrap</c>; пересборка одной сцены
+    /// не должна выбрасывать из него остальные одиннадцать.
+    /// </summary>
+    private static void EnsureSceneInBuildSettings(string scenePath)
+    {
+        var scenes = EditorBuildSettings.scenes;
+        for (int i = 0; i < scenes.Length; i++)
+        {
+            if (scenes[i].path != scenePath) continue;
+            if (!scenes[i].enabled)
+            {
+                scenes[i].enabled = true;
+                EditorBuildSettings.scenes = scenes;
+            }
+            return;
+        }
+
+        var extended = new EditorBuildSettingsScene[scenes.Length + 1];
+        scenes.CopyTo(extended, 0);
+        extended[scenes.Length] = new EditorBuildSettingsScene(scenePath, true);
+        EditorBuildSettings.scenes = extended;
     }
 
     private static void EnsureTags(params string[] tags)
